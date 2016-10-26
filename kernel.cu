@@ -1,3 +1,4 @@
+#include <cassert>
 #include <cfloat>
 #include "private.h"
 
@@ -19,82 +20,66 @@ __global__ void log_cuda(uint32_t size, float *v) {
   v[index] = logf(v[index]);
 }
 
-// uint64_t is a typedef and not understood by atomicMin intrinsic
-using uint64_cu = unsigned long long int;
-static_assert(sizeof(uint64_cu) == 8, "unsigned long long int in CUDA must be 64-bit");
-
 /*
   weights, cols, rows - CSR format
   size - number of matrix rows; rows array contains (size + 1) elements
-  row_blocks - index of rows for blocks
+  plan - execution plan, consists of 2 parts: first is offset table and
+         the second is the row indices
 */
 __global__ void weighted_minhash_cuda(
     const float *__restrict__ rs, const float *__restrict__ ln_cs,
     const float *__restrict__ betas, const float *__restrict__ weights,
     const uint32_t *__restrict__ cols, const uint32_t *__restrict__ rows,
-    const uint32_t *__restrict__ row_blocks, uint32_t size, uint32_t stride,
-    int samples, uint64_cu *__restrict__ hashes) {
-  uint32_t thread_index = blockIdx.x * blockDim.x + threadIdx.x;
-
-  uint32_t srow = (blockIdx.x > 0? row_blocks[blockIdx.x - 1] : 0);
-  uint32_t frow = row_blocks[blockIdx.x];
-  extern __shared__ uint32_t shared_rows[];
-  {
-    uint32_t shmem_stride = ceilf((frow - srow) / blockDim.x);
-    uint32_t shmem_start = threadIdx.x * shmem_stride;
-    uint32_t shmem_finish = min(shmem_start + shmem_stride, frow);
-    uint32_t offset = rows[0];
-    for (uint32_t i = shmem_start; i < shmem_finish; i++) {
-      shared_rows[i] = rows[i] - offset;
-    }
-  }
-  __syncthreads();
-
-  frow -= srow;
-  srow = 0;
-  uint32_t start_index = thread_index * stride;
-  uint32_t finish_index = min(start_index + stride, shared_rows[frow - 1]);
-  if (start_index >= finish_index) {
+    const int32_t *__restrict__ plan, const int sample_delta,
+    uint32_t *__restrict__ hashes) {
+  const uint32_t thread_index = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t sample_index = threadIdx.y;
+  int32_t row_offset = plan[thread_index];
+  int32_t row_border = plan[thread_index + 1];
+  if (row_offset == row_border) {
     return;
   }
-
-  while (srow < frow - 1) {
-     uint32_t middle = (srow + frow) << 1;
-     uint32_t middle_index = shared_rows[middle];
-     if (start_index < middle_index) {
-       frow = middle;
-     } else {
-       srow = middle;
-     }
-  }
-
-  // srow >= rows[srow] - start row index (may be partial)
-  //  |
-  //  $------------$------$------$---------------$
-  //         |                             |
-  //    start_index                   finish_index
-
-  for (int s = 0; s < samples; s++) {
-    uint32_t row = srow;
-    uint64_cu hash = 0xDEADF00DDEADF00Dllu;
-    float ln_amin = FLT_MAX;
-    for (uint32_t index = start_index; index < finish_index; index++) {
-      float w = weights[index];
-      float d = cols[index];
-      int64_t ci = s; ci *= d_dim; ci += d;
+  const uint32_t sample_offset = sample_index * sample_delta;
+  const uint32_t samples = blockDim.y * sample_delta;
+  extern __shared__ float shmem[];
+  float *lnmins = &shmem[(threadIdx.x * blockDim.y + sample_index) * 3 * sample_delta];
+  uint32_t *dmins = reinterpret_cast<uint32_t* >(lnmins + sample_delta);
+  uint32_t *tmins = dmins + sample_delta;
+  int32_t row = -1;
+  uint32_t border = 0, index = 0;
+  for (;; index++) {
+    if (index >= border) {
+      for (uint32_t s = 0; s < sample_delta; s++) {
+        lnmins[s] = FLT_MAX;
+      }
+      if (row >= 0) {
+        for (int s = 0; s < sample_delta; s++) {
+          auto hash = hashes + (row * samples + s + sample_offset) * 2;
+          hash[0] = dmins[s];
+          hash[1] = tmins[s];
+        }
+      }
+      if (row_offset >= row_border) {
+        break;
+      }
+      row = plan[row_offset++];
+      index = rows[row];
+      border = rows[row + 1];
+    }
+    float w = logf(weights[index]);
+    float d = cols[index];
+    #pragma unroll 4
+    for (int s = 0; s < sample_delta; s++) {
+      int64_t ci = s + sample_offset; ci *= d_dim; ci += d;
       float r = rs[ci];
       float beta = betas[ci];
-      float t = floorf(logf(w) / r + beta);
+      float t = floorf(w / r + beta);
       float ln_y = (t - beta) * r;
       float ln_a = ln_cs[ci] - ln_y - r;
-      if (ln_a < ln_amin) {
-        hash = (static_cast<uint64_cu>(d) << 32) | static_cast<uint64_cu>(t);
-      }
-      uint32_t next_index = index + 1;
-      if (next_index == shared_rows[row + 1] || next_index == finish_index) {
-        atomicMin(hashes + (row - 1) * samples + s, hash);
-        row++;
-        ln_amin = FLT_MAX;
+      if (ln_a < lnmins[s]) {
+        lnmins[s] = ln_a;
+        dmins[s] = d;
+        tmins[s] = t;
       }
     }
   }
@@ -128,18 +113,21 @@ MHCUDAResult weighted_minhash(
     const udevptrs<float> &rs, const udevptrs<float> &ln_cs,
     const udevptrs<float> &betas, const udevptrs<float> &weights,
     const udevptrs<uint32_t> &cols, const udevptrs<uint32_t> &rows,
-    const udevptrs<uint32_t> &row_blocks, const std::vector<uint32_t> &rsizes,
-    const std::vector<uint32_t> &strides, const std::vector<uint32_t> &tsizes,
-    int samples, const std::vector<uint32_t> &shmem_sizes,
-    const std::vector<int> &devs, int verbosity, udevptrs<uint64_t> *hashes) {
+    int samples, const std::vector<int> &sample_deltas,
+    const udevptrs<int32_t> &plan, const std::vector<uint32_t> &grid_sizes,
+    const std::vector<int> &devs, int verbosity, udevptrs<uint32_t> *hashes) {
   FOR_EACH_DEVI(
-    dim3 block(MINHASH_BLOCK_SIZE, 1, 1);
-    dim3 grid(ceilf(static_cast<float>(tsizes[devi]) / block.x), 1, 1);
-    weighted_minhash_cuda<<<grid, block, shmem_sizes[devi]>>>(
+    int sample_delta = sample_deltas[devi];
+    int spt = samples / sample_delta;
+    assert(MINHASH_BLOCK_SIZE % spt == 0);
+    dim3 block(MINHASH_BLOCK_SIZE / spt, spt, 1);
+    dim3 grid(grid_sizes[devi], 1, 1);
+    auto shmem = 3 * 4 * MINHASH_BLOCK_SIZE * sample_delta;
+    DEBUG("dev #%d: <<<%d, [%d, %d], %d>>>\n", devs[devi], grid.x, block.x, block.y, shmem);
+    weighted_minhash_cuda<<<grid, block, shmem>>>(
         rs[devi].get(), ln_cs[devi].get(), betas[devi].get(),
         weights[devi].get(), cols[devi].get(), rows[devi].get(),
-        row_blocks[devi].get(), rsizes[devi], strides[devi], samples,
-        reinterpret_cast<uint64_cu *>((*hashes)[devi].get()));
+        plan[devi].get(), sample_delta, (*hashes)[devi].get());
   );
   return mhcudaSuccess;
 }

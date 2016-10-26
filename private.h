@@ -138,13 +138,12 @@ extern "C" {
   cudaError_t log_(uint32_t size, float *v);
   MHCUDAResult setup_weighted_minhash(uint32_t dim, int verbosity);
   MHCUDAResult weighted_minhash(
-    const udevptrs<float> &rs, const udevptrs<float> &ln_cs,
-    const udevptrs<float> &betas, const udevptrs<float> &weights,
-    const udevptrs<uint32_t> &cols, const udevptrs<uint32_t> &rows,
-    const udevptrs<uint32_t> &row_blocks, const std::vector<uint32_t> &rsizes,
-    const std::vector<uint32_t> &strides, const std::vector<uint32_t> &tsizes,
-    int samples, const std::vector<uint32_t> &shmem_sizes,
-    const std::vector<int> &devs, int verbosity, udevptrs<uint64_t> *hashes);
+      const udevptrs<float> &rs, const udevptrs<float> &ln_cs,
+      const udevptrs<float> &betas, const udevptrs<float> &weights,
+      const udevptrs<uint32_t> &cols, const udevptrs<uint32_t> &rows,
+      int samples, const std::vector<int> &sample_delta,
+      const udevptrs<int32_t> &plan, const std::vector<uint32_t> &grid_sizes,
+      const std::vector<int> &devs, int verbosity, udevptrs<uint32_t> *hashes);
 }
 
 #define MINHASH_BLOCK_SIZE 512

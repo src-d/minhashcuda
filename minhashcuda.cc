@@ -1,7 +1,9 @@
 #include <cassert>
 #include <cinttypes>
 #include <algorithm>
+#include <condition_variable>
 #include <map>
+#include <thread>
 #include "private.h"
 
 #include <curand.h>
@@ -11,25 +13,32 @@ extern "C" {
 struct MinhashCudaGenerator_ {
   MinhashCudaGenerator_(uint32_t dim_, uint16_t samples_,
                         const std::vector<int> &devs_, int verbosity_)
-      : dim(dim_), samples(samples_), sizes(devs_.size(), 0),
-        lengths(devs_.size(), 0), devs(devs_), verbosity(verbosity_) {}
+      : dim(dim_), samples(samples_), weights(devs_.size()),
+        cols(devs_.size()), rows(devs_.size()), plans(devs_.size()),
+        hashes(devs_.size()), sizes(devs_.size(), 0),
+        lengths(devs_.size(), 0), plan_sizes(devs_.size(), 0),
+        devs(devs_), verbosity(verbosity_) {}
 
   udevptrs<float> rs;
   udevptrs<float> ln_cs;
   udevptrs<float> betas;
+  uint32_t dim;
+  uint16_t samples;
   mutable udevptrs<float> weights;
   mutable udevptrs<uint32_t> cols;
   mutable udevptrs<uint32_t> rows;
-  mutable udevptrs<uint32_t> row_blocks;
+  mutable udevptrs<int32_t> plans;
   mutable udevptrs<uint32_t> hashes;
-  uint32_t dim;
-  uint16_t samples;
   mutable std::vector<uint32_t> sizes;
   mutable std::vector<uint32_t> lengths;
+  mutable std::vector<uint32_t> plan_sizes;
   std::vector<uint32_t> shmem_sizes;
   std::vector<int> devs;
   int verbosity;
 };
+
+}  // extern "C"
+
 
 static std::vector<int> setup_devices(uint32_t device, int verbosity) {
   std::vector<int> devs;
@@ -176,6 +185,8 @@ static MHCUDAResult mhcuda_init_internal(
   return mhcudaSuccess;
 }
 
+extern "C" {
+
 MinhashCudaGenerator *mhcuda_init(
     uint32_t dim, uint16_t samples, uint32_t seed,
     uint32_t devices, int verbosity, MHCUDAResult *status) {
@@ -212,6 +223,32 @@ MinhashCudaGenerator *mhcuda_init(
   return gen.release();
 }
 
+MinhashCudaGeneratorParameters mhcuda_get_parameters(const MinhashCudaGenerator *gen) {
+  if (gen == nullptr) {
+    return {};
+  }
+  return MinhashCudaGeneratorParameters {
+      .dim=gen->dim, .samples=gen->samples, .verbosity=gen->verbosity
+  };
+}
+
+MHCUDAResult mhcuda_assign_random_vars(
+    const MinhashCudaGenerator *gen, const float *rs,
+    const float *ln_cs, const float *betas) {
+  if (!gen || !rs || !ln_cs || !betas) {
+    return mhcudaInvalidArguments;
+  }
+  int verbosity = gen->verbosity;
+  auto &devs = gen->devs;
+  size_t const_size = gen->dim * gen->samples;
+  CUMEMCPY_H2D_ASYNC(gen->rs, 0, rs, const_size);
+  CUMEMCPY_H2D_ASYNC(gen->ln_cs, 0, ln_cs, const_size);
+  CUMEMCPY_H2D_ASYNC(gen->betas, 0, betas, const_size);
+  return mhcudaSuccess;
+}
+
+}  // extern "C"
+
 static std::vector<uint32_t> calc_best_split(
     const MinhashCudaGenerator *gen, const uint32_t *rows, uint32_t length) {
   uint32_t ideal_split = rows[length] / gen->devs.size();
@@ -223,16 +260,25 @@ static std::vector<uint32_t> calc_best_split(
     if (row <= length) {
       fork.assign(variants.begin(), variants.end());
     }
-    for (auto &v : variants) {
-      v.push_back(row - 1);
+    if (!variants.empty()) {
+      for (auto &v : variants) {
+        v.push_back(row - 1);
+      }
+    } else {
+      variants.push_back({row - 1});
     }
     if (row <= length) {
-      for (auto &v : fork) {
-        v.push_back(row);
+      if (!fork.empty()) {
+        for (auto &v : fork) {
+          v.push_back(row);
+        }
+      } else {
+        fork.push_back({row});
       }
       variants.insert(variants.end(), fork.begin(), fork.end());
     }
   }
+  assert(!variants.empty());
   std::vector<uint32_t> *best = nullptr;
   uint32_t min_cost = 0xFFFFFFFFu;
   for (auto &v : variants) {
@@ -254,52 +300,58 @@ static std::vector<uint32_t> calc_best_split(
 
 static MHCUDAResult fill_buffers(
     const MinhashCudaGenerator *gen, const float *weights,
-    const uint32_t *cols, const uint32_t *rows,
-    const std::vector<uint32_t> &split, std::vector<uint32_t> *rsizes,
-    std::vector<uint32_t> *tsizes) {
+    const uint32_t *cols, const uint32_t *rows, const std::vector<uint32_t> &split,
+    std::vector<uint32_t> *rsizes, std::vector<uint32_t> *tsizes) {
   int verbosity = gen->verbosity;
   auto &devs = gen->devs;
-  FOR_EACH_DEVI(
-    uint32_t row = split[devi], prev_row = (devi > 0)? split[devi - 1] : 0;
+  for (size_t devi = 0; devi < devs.size(); devi++) {
+    CUCH(cudaSetDevice(devs[devi]), mhcudaNoSuchDevice);
+    uint32_t row = split[devi], prev_row = (devi > 0) ? split[devi - 1] : 0;
     rsizes->push_back(row - prev_row);
     if (rsizes->back() > gen->lengths[devi]) {
-      DEBUG("resizing rows and hashes: %" PRIu32 " -> %" PRIu32,
-          gen->lengths[devi], rsizes->back());
+      DEBUG("resizing rows and hashes: %" PRIu32 " -> %" PRIu32 "\n",
+            gen->lengths[devi], rsizes->back());
       gen->rows[devi].reset();
       gen->hashes[devi].reset();
       {
+        gen->rows[devi].reset();
         uint32_t *ptr;
-        CUCH(cudaMalloc(&ptr, rsizes->back() * sizeof(uint32_t)),
+        CUCH(cudaMalloc(&ptr, (rsizes->back() + 1) * sizeof(uint32_t)),
              mhcudaMemoryAllocationFailure);
         gen->rows[devi].reset(ptr);
       }
       {
+        gen->hashes[devi].reset();
         uint32_t *ptr;
-        CUCH(cudaMalloc(&ptr, rsizes->back() * 2 * sizeof(uint32_t)),
+        CUCH(cudaMalloc(&ptr, rsizes->back() * gen->samples * sizeof(uint64_t)),
              mhcudaMemoryAllocationFailure);
         gen->hashes[devi].reset(ptr);
       }
       gen->lengths[devi] = rsizes->back();
     }
     CUCH(cudaMemcpyAsync(gen->rows[devi].get(), rows + prev_row,
-                         rsizes->back() * sizeof(uint32_t),
+                         (rsizes->back() + 1) * sizeof(uint32_t),
                          cudaMemcpyHostToDevice), mhcudaMemoryCopyError);
+#ifndef NDEBUG
     CUCH(cudaMemsetAsync(gen->hashes[devi].get(), 0xff,
-                         rsizes->back() * 2 * sizeof(uint32_t)),
+                         rsizes->back() * gen->samples * 2 * sizeof(uint32_t)),
          mhcudaRuntimeError);
+#endif
     tsizes->push_back(rows[row] - rows[prev_row]);
     if (tsizes->back() > gen->sizes[devi]) {
-      DEBUG("resizing weights and cols: %" PRIu32 " -> %" PRIu32,
+      DEBUG("resizing weights and cols: %" PRIu32 " -> %" PRIu32 "\n",
             gen->sizes[devi], tsizes->back());
       gen->weights[devi].reset();
       gen->cols[devi].reset();
       {
+        gen->weights[devi].reset();
         float *ptr;
         CUCH(cudaMalloc(&ptr, tsizes->back() * sizeof(float)),
              mhcudaMemoryAllocationFailure);
         gen->weights[devi].reset(ptr);
       }
       {
+        gen->cols[devi].reset();
         uint32_t *ptr;
         CUCH(cudaMalloc(&ptr, tsizes->back() * sizeof(uint32_t)),
              mhcudaMemoryAllocationFailure);
@@ -313,21 +365,112 @@ static MHCUDAResult fill_buffers(
     CUCH(cudaMemcpyAsync(gen->cols[devi].get(), cols + rows[prev_row],
                          tsizes->back() * sizeof(uint32_t),
                          cudaMemcpyHostToDevice), mhcudaMemoryCopyError);
-  );
-  return mhcudaSuccess;
-}
-
-static MHCUDAResult calc_strides(
-    const MinhashCudaGenerator *gen, std::vector<uint32_t> *strides,
-    std::vector<uint32_t> *shmem_sizes) {
-  for (size_t devi = 0; devi < gen->devs.size(); devi++) {
-    uint32_t length = gen->lengths[devi];
-    if (length * sizeof(uint32_t) > gen->shmem_sizes[devi]) {
-
-    }
   }
   return mhcudaSuccess;
 }
+
+static void binpack(
+    const MinhashCudaGenerator *gen, const uint32_t *rows,
+    const std::vector<uint32_t> &split, const std::vector<int> &sample_deltas,
+    std::vector<std::vector<int32_t>> *plans, std::vector<uint32_t> *grid_sizes) {
+  const int32_t ideal_binavgcount = 20;
+  auto &devs = gen->devs;
+  plans->resize(devs.size());
+  grid_sizes->resize(devs.size());
+  #pragma omp parallel for
+  for (size_t devi = 0; devi < devs.size(); devi++) {
+    uint32_t last_row = split[devi], first_row = (devi > 0) ? split[devi - 1] : 0;
+    std::vector<std::tuple<int32_t, uint32_t>> blocks;
+    blocks.reserve(last_row - first_row);
+    for (uint32_t i = first_row; i < last_row; i++) {
+      blocks.emplace_back(rows[i + 1] - rows[i], i);
+    }
+    std::sort(blocks.rbegin(), blocks.rend()); // reverse order
+    int32_t max = std::get<0>(blocks.front());
+    uint32_t size = rows[last_row] - rows[first_row];
+    int32_t avg = size / blocks.size();
+    int32_t blockDim = (MINHASH_BLOCK_SIZE * sample_deltas[devi]) / gen->samples;
+    assert(blockDim > 0);
+    int32_t bintotal = ceilf(static_cast<float>(size) / blockDim);
+    int32_t max_binavgcount = ceilf(static_cast<float>(bintotal) / avg);
+    int32_t binavgcount = max_binavgcount;
+    for (int i = 2; binavgcount > ideal_binavgcount &&
+         i <= max_binavgcount / ideal_binavgcount; i++) {
+      binavgcount = max_binavgcount / i;
+    }
+    int32_t binsize = std::max(binavgcount * avg, max);
+    // this is an initial approximation - the real life is of course tougher
+    // we are going to get some imbalance though we greedily try to reduce it
+    std::vector<std::pair<int32_t, std::vector<uint32_t>>> bins(
+        ceilf(static_cast<float>(size) / (binsize * blockDim)) * blockDim);
+    assert(bins.size() > 0 && bins.size() % blockDim == 0);
+    grid_sizes->at(devi) = bins.size() / blockDim;
+    for (auto &block : blocks) {
+      std::pop_heap(bins.begin(), bins.end());
+      auto &bin = bins.back();
+      bin.first -= std::get<0>(block); // max heap
+      bin.second.push_back(std::get<1>(block));
+      std::push_heap(bins.begin(), bins.end());
+    }
+    std::sort_heap(bins.begin(), bins.end());
+    auto &plan = plans->at(devi);
+    plan.resize(bins.size() + 1 + blocks.size());
+    uint32_t offset = bins.size() + 1;
+    for (uint32_t i = 0; i < bins.size(); i++) {
+      plan[i] = offset;
+      for (auto row : bins[i].second) {
+        plan[offset++] = row;
+      }
+    }
+    plan[bins.size()] = offset;  // end offset equals to the previous
+  }
+}
+
+static MHCUDAResult fill_plans(
+    const MinhashCudaGenerator *gen, const std::vector<std::vector<int32_t>> &plans) {
+  int verbosity = gen->verbosity;
+  auto &devs = gen->devs;
+  assert(plans.size() == devs.size());
+  for (size_t devi = 0; devi < devs.size(); devi++) {
+    CUCH(cudaSetDevice(devs[devi]), mhcudaNoSuchDevice);
+    auto plan_size = plans[devi].size();
+    if (gen->plan_sizes[devi] < plan_size) {
+      gen->plans[devi].reset();
+      int32_t *ptr;
+      CUCH(cudaMalloc(&ptr, plan_size * sizeof(int32_t)), mhcudaMemoryAllocationFailure);
+      gen->plans[devi].reset(ptr);
+      gen->plan_sizes[devi] = plan_size;
+    }
+    CUCH(cudaMemcpyAsync(gen->plans[devi].get(), plans[devi].data(),
+                         plan_size * sizeof(int32_t),
+                         cudaMemcpyHostToDevice), mhcudaMemoryCopyError);
+  }
+  return mhcudaSuccess;
+}
+
+
+static void dump_vector(const std::vector<uint32_t> &vec, const char *name) {
+  printf("%s: ", name);
+  for (size_t i = 0; i < vec.size() - 1; i++) {
+    printf("%" PRIu32 ", ", vec[i]);
+  }
+  printf("%" PRIu32 "\n", vec.back());
+}
+
+static void dump_vectors(const std::vector<std::vector<int32_t>> &vec,
+                         const char *name) {
+  printf("%s:\n", name);
+  for (size_t vi = 0; vi < vec.size(); vi++) {
+    printf("[%zu] ", vi);
+    auto &subvec = vec[vi];
+    for (size_t i = 0; i < subvec.size() - 1; i++) {
+      printf("%" PRIi32 ", ", subvec[i]);
+    }
+    printf("%" PRIi32 "\n", subvec.back());
+  }
+}
+
+extern "C" {
 
 MHCUDAResult mhcuda_calc(
     const MinhashCudaGenerator *gen, const float *weights,
@@ -336,16 +479,49 @@ MHCUDAResult mhcuda_calc(
   if (!gen || !weights || !cols || !rows || !output || length == 0) {
     return mhcudaInvalidArguments;
   }
-  std::vector<uint32_t> rsizes, tsizes, strides, shmem_sizes;
-  {
-    std::vector<uint32_t> split = calc_best_split(gen, rows, length);
-    RETERR(fill_buffers(gen, weights, cols, rows, split, &rsizes, &tsizes));
+  int verbosity = gen->verbosity;
+  auto &devs = gen->devs;
+  INFO("Preparing...\n");
+  std::vector<uint32_t> split = calc_best_split(gen, rows, length);
+  if (verbosity > 1) {
+    dump_vector(split, "split");
   }
-  calc_strides(gen, &strides, &shmem_sizes);
+  std::vector<uint32_t> rsizes, tsizes, grid_sizes;
+  std::vector<std::vector<int32_t>> plans;
+  RETERR(fill_buffers(gen, weights, cols, rows, split, &rsizes, &tsizes));
+  std::vector<int> sample_deltas;
+  int samples = gen->samples;
+  for (auto shmem_size : gen->shmem_sizes) {
+    int sdmax = shmem_size / (3 * 4 * MINHASH_BLOCK_SIZE);
+    assert(sdmax > 0);
+    int sd = sdmax + 1;
+    for (int i = 1; i <= samples && sd > sdmax; i++) {
+      if (samples % i == 0) {
+        sd = samples / i;
+      }
+    }
+    sample_deltas.push_back(sd);
+  }
+  binpack(gen, rows, split, sample_deltas, &plans, &grid_sizes);
+  if (verbosity > 1) {
+    dump_vectors(plans, "plans");
+    dump_vector(grid_sizes, "grid_sizes");
+  }
+  RETERR(fill_plans(gen, plans));
+  INFO("Executing the CUDA kernel...\n");
   RETERR(weighted_minhash(
       gen->rs, gen->ln_cs, gen->betas, gen->weights, gen->cols, gen->rows,
-      gen->row_blocks, rsizes, strides, tsizes, gen->samples, shmem_sizes, gen->devs,
-      gen->verbosity, reinterpret_cast<udevptrs<uint64_t> *>(&gen->hashes)));
+      samples, sample_deltas, gen->plans, grid_sizes, devs, verbosity,
+      &gen->hashes));
+  uint32_t offset = 0;
+  FOR_EACH_DEVI(
+    auto size = rsizes[devi] * gen->samples * 2;
+    CUCH(cudaMemcpyAsync(output + offset, gen->hashes[devi].get(),
+                         size * sizeof(uint32_t), cudaMemcpyDeviceToHost),
+         mhcudaMemoryCopyError);
+    offset += size;
+  );
+  SYNC_ALL_DEVS;
   return mhcudaSuccess;
 }
 
