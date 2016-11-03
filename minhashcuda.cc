@@ -504,24 +504,26 @@ MHCUDAResult mhcuda_calc(
   }
   binpack(gen, rows, split, sample_deltas, &plans, &grid_sizes);
   if (verbosity > 1) {
-    dump_vectors(plans, "plans");
+    if (length <= 10) {
+      dump_vectors(plans, "plans");
+    }
     dump_vector(grid_sizes, "grid_sizes");
   }
   RETERR(fill_plans(gen, plans));
   INFO("Executing the CUDA kernel...\n");
   RETERR(weighted_minhash(
       gen->rs, gen->ln_cs, gen->betas, gen->weights, gen->cols, gen->rows,
-      samples, sample_deltas, gen->plans, grid_sizes, devs, verbosity,
-      &gen->hashes));
-  uint32_t offset = 0;
+      samples, sample_deltas, gen->plans, split, rows, grid_sizes, devs,
+      verbosity, &gen->hashes));
   FOR_EACH_DEVI(
     auto size = rsizes[devi] * gen->samples * 2;
-    CUCH(cudaMemcpyAsync(output + offset, gen->hashes[devi].get(),
+    CUCH(cudaMemcpyAsync(output, gen->hashes[devi].get(),
                          size * sizeof(uint32_t), cudaMemcpyDeviceToHost),
          mhcudaMemoryCopyError);
-    offset += size;
+    output += size;
   );
   SYNC_ALL_DEVS;
+  INFO("mhcuda - success\n");
   return mhcudaSuccess;
 }
 

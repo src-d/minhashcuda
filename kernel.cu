@@ -22,7 +22,6 @@ __global__ void log_cuda(uint32_t size, float *v) {
 
 /*
   weights, cols, rows - CSR format
-  size - number of matrix rows; rows array contains (size + 1) elements
   plan - execution plan, consists of 2 parts: first is offset table and
          the second is the row indices
 */
@@ -31,6 +30,7 @@ __global__ void weighted_minhash_cuda(
     const float *__restrict__ betas, const float *__restrict__ weights,
     const uint32_t *__restrict__ cols, const uint32_t *__restrict__ rows,
     const int32_t *__restrict__ plan, const int sample_delta,
+    const uint32_t device_row_offset, const uint32_t device_wc_offset,
     uint32_t *__restrict__ hashes) {
   const uint32_t thread_index = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t sample_index = threadIdx.y;
@@ -54,7 +54,8 @@ __global__ void weighted_minhash_cuda(
       }
       if (row >= 0) {
         for (int s = 0; s < sample_delta; s++) {
-          auto hash = hashes + (row * samples + s + sample_offset) * 2;
+          auto hash = hashes +
+              ((row - device_row_offset) * samples + s + sample_offset) * 2;
           hash[0] = dmins[s];
           hash[1] = tmins[s];
         }
@@ -63,11 +64,11 @@ __global__ void weighted_minhash_cuda(
         break;
       }
       row = plan[row_offset++];
-      index = rows[row];
-      border = rows[row + 1];
+      index = rows[row - device_row_offset];
+      border = rows[row - device_row_offset + 1];
     }
-    float w = logf(weights[index]);
-    float d = cols[index];
+    float w = logf(weights[index - device_wc_offset]);
+    float d = cols[index - device_wc_offset];
     #pragma unroll 4
     for (int s = 0; s < sample_delta; s++) {
       int64_t ci = s + sample_offset; ci *= d_dim; ci += d;
@@ -114,7 +115,8 @@ MHCUDAResult weighted_minhash(
     const udevptrs<float> &betas, const udevptrs<float> &weights,
     const udevptrs<uint32_t> &cols, const udevptrs<uint32_t> &rows,
     int samples, const std::vector<int> &sample_deltas,
-    const udevptrs<int32_t> &plan, const std::vector<uint32_t> &grid_sizes,
+    const udevptrs<int32_t> &plan, const std::vector<uint32_t> &split,
+    const uint32_t *original_rows, const std::vector<uint32_t> &grid_sizes,
     const std::vector<int> &devs, int verbosity, udevptrs<uint32_t> *hashes) {
   FOR_EACH_DEVI(
     int sample_delta = sample_deltas[devi];
@@ -123,11 +125,16 @@ MHCUDAResult weighted_minhash(
     dim3 block(MINHASH_BLOCK_SIZE / spt, spt, 1);
     dim3 grid(grid_sizes[devi], 1, 1);
     auto shmem = 3 * 4 * MINHASH_BLOCK_SIZE * sample_delta;
-    DEBUG("dev #%d: <<<%d, [%d, %d], %d>>>\n", devs[devi], grid.x, block.x, block.y, shmem);
+    uint32_t row_offset = (devi > 0)? split[devi - 1] : 0;
+    DEBUG("dev #%d: <<<%d, [%d, %d], %d>>>(%u, %u)\n",
+          devs[devi], grid.x, block.x, block.y, shmem,
+          static_cast<unsigned>(row_offset),
+          static_cast<unsigned>(original_rows[row_offset]));
     weighted_minhash_cuda<<<grid, block, shmem>>>(
         rs[devi].get(), ln_cs[devi].get(), betas[devi].get(),
         weights[devi].get(), cols[devi].get(), rows[devi].get(),
-        plan[devi].get(), sample_delta, (*hashes)[devi].get());
+        plan[devi].get(), sample_delta, row_offset, original_rows[row_offset],
+        (*hashes)[devi].get());
   );
   return mhcudaSuccess;
 }

@@ -142,7 +142,8 @@ extern "C" {
       const udevptrs<float> &betas, const udevptrs<float> &weights,
       const udevptrs<uint32_t> &cols, const udevptrs<uint32_t> &rows,
       int samples, const std::vector<int> &sample_delta,
-      const udevptrs<int32_t> &plan, const std::vector<uint32_t> &grid_sizes,
+      const udevptrs<int32_t> &plan, const std::vector<uint32_t> &split,
+      const uint32_t *original_rows, const std::vector<uint32_t> &grid_sizes,
       const std::vector<int> &devs, int verbosity, udevptrs<uint32_t> *hashes);
 }
 
