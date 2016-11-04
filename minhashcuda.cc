@@ -538,6 +538,9 @@ MHCUDAResult mhcuda_calc(
         sd = samples / i;
       }
     }
+    if (sd > sdmax) {
+      return mhcudaInvalidArguments;
+    }
     sample_deltas.push_back(sd);
   }
   binpack(gen, rows, split, sample_deltas, &plans, &grid_sizes);

@@ -1,3 +1,4 @@
+from time import time
 import unittest
 
 from datasketch import WeightedMinHashGenerator, WeightedMinHash
@@ -41,11 +42,15 @@ class MHCUDATests(unittest.TestCase):
         libMHCUDA.minhash_cuda_assign_vars(gen, bgen.rs, bgen.ln_cs, bgen.betas)
         m = csr_matrix(data, dtype=numpy.float32)
         print(m.nnz / (m.shape[0] * m.shape[1]))
+        ts = time()
         hashes = libMHCUDA.minhash_cuda_calc(gen, m)
+        print("libMHCUDA:", time() - ts)
         libMHCUDA.minhash_cuda_fini(gen)
         self.assertEqual(hashes.shape, (len(data), 128, 2))
+        ts = time()
         true_hashes = numpy.array([bgen.minhash(line).hashvalues for line in data],
                                   dtype=numpy.uint32)
+        print("datasketch:", time() - ts)
         self.assertEqual(true_hashes.shape, (len(data), 128, 2))
         try:
             self.assertTrue((hashes == true_hashes).all())

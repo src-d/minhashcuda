@@ -91,7 +91,7 @@ static void set_cuda_memcpy_error() {
 }
 
 static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args, PyObject *kwargs) {
-  uint32_t dim, seed = 0, devices = 0;
+  uint32_t dim, seed = static_cast<uint32_t>(time(NULL)), devices = 0;
   uint16_t samples;
   int verbosity = 0;
   static const char *kwlist[] = {
