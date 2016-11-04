@@ -215,7 +215,7 @@ MinhashCudaGenerator *mhcuda_init(
       return nullptr;
     }
   }
-  res = setup_weighted_minhash(dim, verbosity);
+  res = setup_weighted_minhash(dim, devs, verbosity);
   if (res != mhcudaSuccess) {
     if (status) *status = res;
     return nullptr;
@@ -375,6 +375,7 @@ static void binpack(
     std::vector<std::vector<int32_t>> *plans, std::vector<uint32_t> *grid_sizes) {
   const int32_t ideal_binavgcount = 20;
   auto &devs = gen->devs;
+  int verbosity = gen->verbosity;
   plans->resize(devs.size());
   grid_sizes->resize(devs.size());
   #pragma omp parallel for
@@ -404,6 +405,7 @@ static void binpack(
     std::vector<std::pair<int32_t, std::vector<uint32_t>>> bins(
         ceilf(static_cast<float>(size) / (binsize * blockDim)) * blockDim);
     assert(bins.size() > 0 && bins.size() % blockDim == 0);
+    DEBUG("dev #%d: binsize %d, bins %zu\n", devs[devi], binsize, bins.size());
     grid_sizes->at(devi) = bins.size() / blockDim;
     for (auto &block : blocks) {
       std::pop_heap(bins.begin(), bins.end());
@@ -413,6 +415,18 @@ static void binpack(
       std::push_heap(bins.begin(), bins.end());
     }
     std::sort_heap(bins.begin(), bins.end());
+#ifndef NDEBUG
+    if (verbosity > 1) {
+      printf("dev #%d imbalance: ", devs[devi]);
+      for (uint32_t i = 0; i < bins.size(); i++) {
+        if (i % blockDim == 0 && i > 0) {
+          int32_t delta = bins[i].first - bins[i - blockDim].first;
+          printf("(%d %d%%) ", delta, -(delta * 100) / bins[i - blockDim].first);
+        }
+      }
+      printf("\n");
+    }
+#endif
     auto &plan = plans->at(devi);
     plan.resize(bins.size() + 1 + blocks.size());
     uint32_t offset = bins.size() + 1;
@@ -463,10 +477,16 @@ static void dump_vectors(const std::vector<std::vector<int32_t>> &vec,
   for (size_t vi = 0; vi < vec.size(); vi++) {
     printf("[%zu] ", vi);
     auto &subvec = vec[vi];
-    for (size_t i = 0; i < subvec.size() - 1; i++) {
+    auto last = std::min(subvec.size() - 1, static_cast<size_t>(9));
+    for (size_t i = 0; i < last; i++) {
       printf("%" PRIi32 ", ", subvec[i]);
     }
-    printf("%" PRIi32 "\n", subvec.back());
+    printf("%" PRIi32, subvec[last]);
+    if (last < subvec.size() - 1) {
+      printf("...\n");
+    } else {
+      printf("\n");
+    }
   }
 }
 
@@ -504,9 +524,7 @@ MHCUDAResult mhcuda_calc(
   }
   binpack(gen, rows, split, sample_deltas, &plans, &grid_sizes);
   if (verbosity > 1) {
-    if (length <= 10) {
-      dump_vectors(plans, "plans");
-    }
+    dump_vectors(plans, "plans");
     dump_vector(grid_sizes, "grid_sizes");
   }
   RETERR(fill_plans(gen, plans));

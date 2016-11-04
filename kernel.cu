@@ -32,22 +32,21 @@ __global__ void weighted_minhash_cuda(
     const int32_t *__restrict__ plan, const int sample_delta,
     const uint32_t device_row_offset, const uint32_t device_wc_offset,
     uint32_t *__restrict__ hashes) {
-  const uint32_t thread_index = blockIdx.x * blockDim.x + threadIdx.x;
-  const uint32_t sample_index = threadIdx.y;
+  const uint32_t thread_index = blockIdx.y * blockDim.y + threadIdx.y;
+  const uint32_t sample_index = threadIdx.x;
   int32_t row_offset = plan[thread_index];
   int32_t row_border = plan[thread_index + 1];
   if (row_offset == row_border) {
     return;
   }
   const uint32_t sample_offset = sample_index * sample_delta;
-  const uint32_t samples = blockDim.y * sample_delta;
+  const uint32_t samples = blockDim.x * sample_delta;
   extern __shared__ float shmem[];
-  float *lnmins = &shmem[(threadIdx.x * blockDim.y + sample_index) * 3 * sample_delta];
+  float *lnmins = &shmem[(threadIdx.y * blockDim.x + sample_index) * 3 * sample_delta];
   uint32_t *dmins = reinterpret_cast<uint32_t* >(lnmins + sample_delta);
   uint32_t *tmins = dmins + sample_delta;
   int32_t row = -1;
-  uint32_t border = 0, index = 0;
-  for (;; index++) {
+  for (uint32_t index = 0, border = 0;; index++) {
     if (index >= border) {
       for (uint32_t s = 0; s < sample_delta; s++) {
         lnmins[s] = FLT_MAX;
@@ -67,8 +66,8 @@ __global__ void weighted_minhash_cuda(
       index = rows[row - device_row_offset];
       border = rows[row - device_row_offset + 1];
     }
-    float w = logf(weights[index - device_wc_offset]);
-    float d = cols[index - device_wc_offset];
+    const float w = logf(weights[index - device_wc_offset]);
+    const float d = cols[index - device_wc_offset];
     #pragma unroll 4
     for (int s = 0; s < sample_delta; s++) {
       int64_t ci = s + sample_offset; ci *= d_dim; ci += d;
@@ -104,9 +103,12 @@ cudaError_t log_(uint32_t size, float *v) {
   return cudaSuccess;
 }
 
-MHCUDAResult setup_weighted_minhash(uint32_t dim, int verbosity) {
-  CUCH(cudaMemcpyToSymbol(d_dim, &dim, sizeof(dim)),
-       mhcudaMemoryCopyError);
+MHCUDAResult setup_weighted_minhash(
+    uint32_t dim, const std::vector<int> &devs, int verbosity) {
+  FOR_EACH_DEV(
+    CUCH(cudaMemcpyToSymbol(d_dim, &dim, sizeof(dim)),
+         mhcudaMemoryCopyError);
+  );
   return mhcudaSuccess;
 }
 
@@ -122,8 +124,8 @@ MHCUDAResult weighted_minhash(
     int sample_delta = sample_deltas[devi];
     int spt = samples / sample_delta;
     assert(MINHASH_BLOCK_SIZE % spt == 0);
-    dim3 block(MINHASH_BLOCK_SIZE / spt, spt, 1);
-    dim3 grid(grid_sizes[devi], 1, 1);
+    dim3 block(spt, MINHASH_BLOCK_SIZE / spt, 1);
+    dim3 grid(1, grid_sizes[devi], 1);
     auto shmem = 3 * 4 * MINHASH_BLOCK_SIZE * sample_delta;
     uint32_t row_offset = (devi > 0)? split[devi - 1] : 0;
     DEBUG("dev #%d: <<<%d, [%d, %d], %d>>>(%u, %u)\n",

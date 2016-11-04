@@ -136,7 +136,8 @@ FOR_EACH_DEV(CUCH(cudaDeviceSynchronize(), mhcudaRuntimeError)); \
 extern "C" {
   cudaError_t gamma_(uint32_t size, const float *v1, float *v2);
   cudaError_t log_(uint32_t size, float *v);
-  MHCUDAResult setup_weighted_minhash(uint32_t dim, int verbosity);
+  MHCUDAResult setup_weighted_minhash(
+      uint32_t dim, const std::vector<int> &devs, int verbosity);
   MHCUDAResult weighted_minhash(
       const udevptrs<float> &rs, const udevptrs<float> &ln_cs,
       const udevptrs<float> &betas, const udevptrs<float> &weights,
