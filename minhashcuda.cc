@@ -232,6 +232,24 @@ MinhashCudaGeneratorParameters mhcuda_get_parameters(const MinhashCudaGenerator 
   };
 }
 
+MHCUDAResult mhcuda_retrieve_random_vars(
+    const MinhashCudaGenerator *gen, float *rs, float *ln_cs, float *betas) {
+  if (!gen || !rs || !ln_cs || !betas) {
+    return mhcudaInvalidArguments;
+  }
+  int verbosity = gen->verbosity;
+  auto &devs = gen->devs;
+  size_t const_size = gen->dim * gen->samples * sizeof(float);
+  CUCH(cudaSetDevice(devs[0]), mhcudaNoSuchDevice);
+  CUCH(cudaMemcpy(rs, gen->rs[0].get(), const_size, cudaMemcpyDeviceToHost),
+       mhcudaMemoryCopyError);
+  CUCH(cudaMemcpy(ln_cs, gen->ln_cs[0].get(), const_size, cudaMemcpyDeviceToHost),
+       mhcudaMemoryCopyError);
+  CUCH(cudaMemcpy(betas, gen->betas[0].get(), const_size, cudaMemcpyDeviceToHost),
+       mhcudaMemoryCopyError);
+  return mhcudaSuccess;
+}
+
 MHCUDAResult mhcuda_assign_random_vars(
     const MinhashCudaGenerator *gen, const float *rs,
     const float *ln_cs, const float *betas) {

@@ -35,6 +35,9 @@ MinhashCudaGenerator* mhcuda_init(
 MinhashCudaGeneratorParameters mhcuda_get_parameters(
     const MinhashCudaGenerator *gen);
 
+MHCUDAResult mhcuda_retrieve_random_vars(
+    const MinhashCudaGenerator *gen, float *rs, float *ln_cs, float *betas);
+
 MHCUDAResult mhcuda_assign_random_vars(
     const MinhashCudaGenerator *gen, const float *rs,
     const float *ln_cs, const float *betas);

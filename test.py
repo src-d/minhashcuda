@@ -1,9 +1,10 @@
 import unittest
 
-from datasketch import WeightedMinHashGenerator
+from datasketch import WeightedMinHashGenerator, WeightedMinHash
 import libMHCUDA
 import numpy
 from scipy.sparse import csr_matrix
+from scipy.stats import gamma, uniform
 
 
 class MHCUDATests(unittest.TestCase):
@@ -12,9 +13,10 @@ class MHCUDATests(unittest.TestCase):
         v2 = [2, 0, 0, 0, 4, 3, 8, 0, 0, 0, 0, 4, 7, 10, 0, 0, 0, 0, 0, 0, 9, 0, 0]
         bgen = WeightedMinHashGenerator(len(v1))
         gen = libMHCUDA.minhash_cuda_init(len(v1), 128, devices=1, verbosity=2)
-        libMHCUDA.minhash_cuda_assign(gen, bgen.rs, bgen.ln_cs, bgen.betas)
+        libMHCUDA.minhash_cuda_assign_vars(gen, bgen.rs, bgen.ln_cs, bgen.betas)
         m = csr_matrix(numpy.array([v1, v2], dtype=numpy.float32))
         hashes = libMHCUDA.minhash_cuda_calc(gen, m)
+        libMHCUDA.minhash_cuda_fini(gen)
         self.assertEqual(hashes.shape, (2, 128, 2))
         true_hashes = numpy.array([bgen.minhash(v1).hashvalues,
                                    bgen.minhash(v2).hashvalues], dtype=numpy.uint32)
@@ -36,10 +38,11 @@ class MHCUDATests(unittest.TestCase):
         del mask
         bgen = WeightedMinHashGenerator(data.shape[-1])
         gen = libMHCUDA.minhash_cuda_init(data.shape[-1], 128, devices=devices, verbosity=2)
-        libMHCUDA.minhash_cuda_assign(gen, bgen.rs, bgen.ln_cs, bgen.betas)
+        libMHCUDA.minhash_cuda_assign_vars(gen, bgen.rs, bgen.ln_cs, bgen.betas)
         m = csr_matrix(data, dtype=numpy.float32)
         print(m.nnz / (m.shape[0] * m.shape[1]))
         hashes = libMHCUDA.minhash_cuda_calc(gen, m)
+        libMHCUDA.minhash_cuda_fini(gen)
         self.assertEqual(hashes.shape, (len(data), 128, 2))
         true_hashes = numpy.array([bgen.minhash(line).hashvalues for line in data],
                                   dtype=numpy.uint32)
@@ -60,6 +63,43 @@ class MHCUDATests(unittest.TestCase):
 
     def test_calc_big_2gpus(self):
         self._test_calc_big(3)
+
+    def test_random_vars(self):
+        gen = libMHCUDA.minhash_cuda_init(1000, 128, devices=1, verbosity=2)
+        rs, ln_cs, betas = libMHCUDA.minhash_cuda_retrieve_vars(gen)
+        libMHCUDA.minhash_cuda_fini(gen)
+        cs = numpy.exp(ln_cs)
+        a, loc, scale = gamma.fit(rs)
+        self.assertTrue(1.97 < a < 2.03)
+        self.assertTrue(-0.01 < loc < 0.01)
+        self.assertTrue(0.98 < scale < 1.02)
+        a, loc, scale = gamma.fit(cs)
+        self.assertTrue(1.97 < a < 2.03)
+        self.assertTrue(-0.01 < loc < 0.01)
+        self.assertTrue(0.98 < scale < 1.02)
+        bmin, bmax = uniform.fit(betas)
+        self.assertTrue(0 <= bmin < 0.001)
+        self.assertTrue(0.999 <= bmax <= 1)
+
+    def test_integration(self):
+        numpy.random.seed(1)
+        data = numpy.random.randint(0, 100, (6400, 130))
+        mask = numpy.random.randint(0, 5, data.shape)
+        data *= (mask >= 4)
+        del mask
+        gen = libMHCUDA.minhash_cuda_init(data.shape[-1], 128, seed=1, verbosity=1)
+        m = csr_matrix(data, dtype=numpy.float32)
+        print(m.nnz / (m.shape[0] * m.shape[1]))
+        hashes = libMHCUDA.minhash_cuda_calc(gen, m)
+        libMHCUDA.minhash_cuda_fini(gen)
+        self.assertEqual(hashes.shape, (len(data), 128, 2))
+        h1 = WeightedMinHash(0, hashes[0])
+        h2 = WeightedMinHash(0, hashes[1])
+        cudamh = h1.jaccard(h2)
+        print(cudamh)
+        truemh = numpy.amin(data[:2], axis=0).sum() / numpy.amax(data[:2], axis=0).sum()
+        print(truemh)
+        self.assertTrue(abs(truemh - cudamh) < 0.005)
 
 
 if __name__ == "__main__":

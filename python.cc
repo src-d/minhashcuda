@@ -9,7 +9,9 @@ static char module_docstring[] =
     "This module provides fast Weighted Minhash implementation which uses CUDA.";
 static char minhash_cuda_init_docstring[] =
     "Prepares Weighted Minhash internal state on GPU.";
-static char minhash_cuda_assign_docstring[] =
+static char minhash_cuda_retrieve_vars_docstring[] =
+    "Copies the random variables rs, ln_cs and betas from the generator to the host.";
+static char minhash_cuda_assign_vars_docstring[] =
     "Assigns random variables rs, ln_cs and betas to the generator. "
     "Used for testing purposes since those variables are already set "
     "in minhash_cuda_init().";
@@ -19,15 +21,18 @@ static char minhash_cuda_fini_docstring[] =
     "Disposes Weighted Minhash internal state on GPU.";
 
 static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args, PyObject *kwargs);
-static PyObject *py_minhash_cuda_assign(PyObject *self, PyObject *args);
+static PyObject *py_minhash_cuda_retrieve_vars(PyObject *self, PyObject *args);
+static PyObject *py_minhash_cuda_assign_vars(PyObject *self, PyObject *args);
 static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args);
 static PyObject *py_minhash_cuda_fini(PyObject *self, PyObject *args);
 
 static PyMethodDef module_functions[] = {
   {"minhash_cuda_init", reinterpret_cast<PyCFunction>(py_minhash_cuda_init),
    METH_VARARGS | METH_KEYWORDS, minhash_cuda_init_docstring},
-  {"minhash_cuda_assign", reinterpret_cast<PyCFunction>(py_minhash_cuda_assign),
-   METH_VARARGS, minhash_cuda_assign_docstring},
+  {"minhash_cuda_retrieve_vars", reinterpret_cast<PyCFunction>(py_minhash_cuda_retrieve_vars),
+   METH_VARARGS, minhash_cuda_retrieve_vars_docstring},
+  {"minhash_cuda_assign_vars", reinterpret_cast<PyCFunction>(py_minhash_cuda_assign_vars),
+   METH_VARARGS, minhash_cuda_assign_vars_docstring},
   {"minhash_cuda_calc", reinterpret_cast<PyCFunction>(py_minhash_cuda_calc),
    METH_VARARGS, minhash_cuda_calc_docstring},
   {"minhash_cuda_fini", reinterpret_cast<PyCFunction>(py_minhash_cuda_fini),
@@ -107,7 +112,7 @@ static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args, PyObject *
   switch (result) {
     case mhcudaInvalidArguments:
       PyErr_SetString(PyExc_ValueError,
-                      "Invalid arguments were passed to mhcuda_init");
+                      "Invalid arguments were passed to minhash_cuda_init");
       return NULL;
     case mhcudaNoSuchDevice:
       set_cuda_device_error();
@@ -119,18 +124,70 @@ static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args, PyObject *
       set_cuda_memcpy_error();
       return NULL;
     case mhcudaRuntimeError:
-      PyErr_SetString(PyExc_AssertionError, "mhcuda_init failure (bug?)");
+      PyErr_SetString(PyExc_AssertionError, "minhash_cuda_init failure (bug?)");
       return NULL;
     case mhcudaSuccess:
       return PyLong_FromUnsignedLongLong(reinterpret_cast<uintptr_t>(gen));
     default:
       PyErr_SetString(PyExc_AssertionError,
-                      "Unknown error code returned from mhcuda_init");
+                      "Unknown error code returned from minhash_cuda_init");
       return NULL;
   }
 }
 
-static PyObject *py_minhash_cuda_assign(PyObject *self, PyObject *args) {
+static PyObject *py_minhash_cuda_retrieve_vars(PyObject *self, PyObject *args) {
+  uint64_t gen_ptr;
+  if (!PyArg_ParseTuple(args, "K", &gen_ptr)) {
+    return NULL;
+  }
+  MinhashCudaGenerator *gen =
+      reinterpret_cast<MinhashCudaGenerator *>(static_cast<uintptr_t>(gen_ptr));
+  if (gen == nullptr) {
+    PyErr_SetString(PyExc_ValueError, "MinHashCuda Generator pointer is null.");
+    return NULL;
+  }
+  auto params = mhcuda_get_parameters(gen);
+  npy_intp dims[] = {params.dim, params.samples, 0};
+  auto rs_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
+      2, dims, NPY_FLOAT32, false));
+  auto ln_cs_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
+      2, dims, NPY_FLOAT32, false));
+  auto betas_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
+      2, dims, NPY_FLOAT32, false));
+  auto rs = reinterpret_cast<float *>(PyArray_DATA(rs_obj));
+  auto ln_cs = reinterpret_cast<float *>(PyArray_DATA(ln_cs_obj));
+  auto betas = reinterpret_cast<float *>(PyArray_DATA(betas_obj));
+  int result;
+  Py_BEGIN_ALLOW_THREADS
+  result = mhcuda_retrieve_random_vars(gen, rs, ln_cs, betas);
+  Py_END_ALLOW_THREADS
+  switch (result) {
+    case mhcudaInvalidArguments:
+      PyErr_SetString(PyExc_ValueError,
+                      "Invalid arguments were passed to minhash_cuda_retrieve_vars");
+      return NULL;
+    case mhcudaNoSuchDevice:
+      set_cuda_device_error();
+      return NULL;
+    case mhcudaMemoryAllocationFailure:
+      set_cuda_malloc_error();
+      return NULL;
+    case mhcudaMemoryCopyError:
+      set_cuda_memcpy_error();
+      return NULL;
+    case mhcudaRuntimeError:
+      PyErr_SetString(PyExc_AssertionError, "minhash_cuda_retrieve_vars failure (bug?)");
+      return NULL;
+    case mhcudaSuccess:
+      return Py_BuildValue("OOO", rs_obj, ln_cs_obj, betas_obj);
+    default:
+      PyErr_SetString(PyExc_AssertionError,
+                      "Unknown error code returned from minhash_cuda_retrieve_vars");
+      return NULL;
+  }
+}
+
+static PyObject *py_minhash_cuda_assign_vars(PyObject *self, PyObject *args) {
   PyObject *rs_obj, *ln_cs_obj, *betas_obj;
   uint64_t gen_ptr;
   if (!PyArg_ParseTuple(args, "KOOO", &gen_ptr, &rs_obj, &ln_cs_obj, &betas_obj)) {
@@ -184,7 +241,7 @@ static PyObject *py_minhash_cuda_assign(PyObject *self, PyObject *args) {
   switch (result) {
     case mhcudaInvalidArguments:
       PyErr_SetString(PyExc_ValueError,
-                      "Invalid arguments were passed to mhcuda_assign");
+                      "Invalid arguments were passed to minhash_cuda_assign_vars");
       return NULL;
     case mhcudaNoSuchDevice:
       set_cuda_device_error();
@@ -196,13 +253,13 @@ static PyObject *py_minhash_cuda_assign(PyObject *self, PyObject *args) {
       set_cuda_memcpy_error();
       return NULL;
     case mhcudaRuntimeError:
-      PyErr_SetString(PyExc_AssertionError, "mhcuda_assign failure (bug?)");
+      PyErr_SetString(PyExc_AssertionError, "minhash_cuda_assign_vars failure (bug?)");
       return NULL;
     case mhcudaSuccess:
       Py_RETURN_NONE;
     default:
       PyErr_SetString(PyExc_AssertionError,
-                      "Unknown error code returned from mhcuda_assign");
+                      "Unknown error code returned from minhash_cuda_assign_vars");
       return NULL;
   }
 }
@@ -269,7 +326,7 @@ static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args) {
   switch (result) {
     case mhcudaInvalidArguments:
       PyErr_SetString(PyExc_ValueError,
-                      "Invalid arguments were passed to mhcuda_calc");
+                      "Invalid arguments were passed to minhash_cuda_calc");
       return NULL;
     case mhcudaNoSuchDevice:
       set_cuda_device_error();
@@ -281,13 +338,13 @@ static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args) {
       set_cuda_memcpy_error();
       return NULL;
     case mhcudaRuntimeError:
-      PyErr_SetString(PyExc_AssertionError, "mhcuda_calc failure (bug?)");
+      PyErr_SetString(PyExc_AssertionError, "minhash_cuda_calc failure (bug?)");
       return NULL;
     case mhcudaSuccess:
       return reinterpret_cast<PyObject *>(output_obj);
     default:
       PyErr_SetString(PyExc_AssertionError,
-                      "Unknown error code returned from mhcuda_calc");
+                      "Unknown error code returned from minhash_cuda_calc");
       return NULL;
   }
 }

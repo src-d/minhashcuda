@@ -11,7 +11,8 @@ using unique_devptr_parent = std::unique_ptr<T, std::function<void(T*)>>;
 template <typename T>
 class unique_devptr : public unique_devptr_parent<T> {
  public:
-  unique_devptr() : unique_devptr_parent<T>() {}
+  unique_devptr() : unique_devptr_parent<T>(
+      nullptr, [](T *p){ if (p) cudaFree(p); }) {}
   explicit unique_devptr(T *ptr, bool fake = false) : unique_devptr_parent<T>(
       ptr, fake? [](T*){} : [](T *p){ if (p) cudaFree(p); }) {}
 };
