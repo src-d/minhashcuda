@@ -13,7 +13,7 @@ to the reference.
 The input format is 32-bit float [CSR](https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_.28CSR.2C_CRS_or_Yale_format.29) matrix.
 The code is optimized for low memory consumption and speed.
 
-What is a Weighted MinHash
+What is Weighted MinHash
 --------------------------
 MinHash can be used to compress unweighted set or binary vector, and estimate
 unweighted Jaccard similarity.
