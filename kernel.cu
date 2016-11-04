@@ -68,9 +68,9 @@ __global__ void weighted_minhash_cuda(
     }
     const float w = logf(weights[index - device_wc_offset]);
     const float d = cols[index - device_wc_offset];
+    int64_t ci = static_cast<int64_t>(sample_offset) * d_dim + d;
     #pragma unroll 4
-    for (int s = 0; s < sample_delta; s++) {
-      int64_t ci = s + sample_offset; ci *= d_dim; ci += d;
+    for (int s = 0; s < sample_delta; s++, ci += d_dim) {
       float r = rs[ci];
       float beta = betas[ci];
       float t = floorf(w / r + beta);
