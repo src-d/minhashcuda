@@ -43,8 +43,7 @@ __global__ void weighted_minhash_cuda(
   const uint32_t samples = blockDim.x * sample_delta;
   extern __shared__ float shmem[];
   float *lnmins = &shmem[(threadIdx.y * blockDim.x + sample_index) * 3 * sample_delta];
-  uint32_t *dmins = reinterpret_cast<uint32_t* >(lnmins + sample_delta);
-  uint32_t *tmins = dmins + sample_delta;
+  uint2 *dtmins = reinterpret_cast<uint2 *>(lnmins + sample_delta);
   int32_t row = -1;
   for (uint32_t index = 0, border = 0;; index++) {
     if (index >= border) {
@@ -53,10 +52,9 @@ __global__ void weighted_minhash_cuda(
       }
       if (row >= 0) {
         for (int s = 0; s < sample_delta; s++) {
-          auto hash = hashes +
-              ((row - device_row_offset) * samples + s + sample_offset) * 2;
-          hash[0] = dmins[s];
-          hash[1] = tmins[s];
+          auto hash = reinterpret_cast<uint2 *>(hashes +
+              ((row - device_row_offset) * samples + s + sample_offset) * 2);
+          *hash = dtmins[s];
         }
       }
       if (row_offset >= row_border) {
@@ -67,7 +65,7 @@ __global__ void weighted_minhash_cuda(
       border = rows[row - device_row_offset + 1];
     }
     const float w = logf(weights[index - device_wc_offset]);
-    const float d = cols[index - device_wc_offset];
+    const uint32_t d = cols[index - device_wc_offset];
     int64_t ci = static_cast<int64_t>(sample_offset) * d_dim + d;
     #pragma unroll 4
     for (int s = 0; s < sample_delta; s++, ci += d_dim) {
@@ -78,8 +76,7 @@ __global__ void weighted_minhash_cuda(
       float ln_a = ln_cs[ci] - ln_y - r;
       if (ln_a < lnmins[s]) {
         lnmins[s] = ln_a;
-        dmins[s] = d;
-        tmins[s] = t;
+        dtmins[s] = {d, static_cast<uint32_t>(t)};
       }
     }
   }

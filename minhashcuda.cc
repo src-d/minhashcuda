@@ -535,7 +535,10 @@ MHCUDAResult mhcuda_calc(
     int sd = sdmax + 1;
     for (int i = 1; i <= samples && sd > sdmax; i++) {
       if (samples % i == 0) {
-        sd = samples / i;
+        int try_sd = samples / i;
+        if (try_sd % 2 == 0) {
+          sd = try_sd;
+        }
       }
     }
     if (sd > sdmax) {
