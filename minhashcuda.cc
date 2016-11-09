@@ -190,7 +190,7 @@ extern "C" {
 MinhashCudaGenerator *mhcuda_init(
     uint32_t dim, uint16_t samples, uint32_t seed,
     uint32_t devices, int verbosity, MHCUDAResult *status) {
-  DEBUG("arguments: %" PRIu32 " %" PRIu16 " %" PRIu32 " %" PRIu32
+  DEBUG("mhcuda_init: %" PRIu32 " %" PRIu16 " %" PRIu32 " %" PRIu32
         " %d %p\n", dim, samples, seed, devices, verbosity, status);
   if (dim == 0 || samples == 0) {
     if (status) *status = mhcudaInvalidArguments;
@@ -518,6 +518,8 @@ MHCUDAResult mhcuda_calc(
     return mhcudaInvalidArguments;
   }
   int verbosity = gen->verbosity;
+  DEBUG("mhcuda_calc: %p %p %p %p %" PRIu32 " %p\n", gen, weights, cols,
+        rows, length, output);
   auto &devs = gen->devs;
   INFO("Preparing...\n");
   std::vector<uint32_t> split = calc_best_split(gen, rows, length);

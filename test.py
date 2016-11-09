@@ -106,6 +106,20 @@ class MHCUDATests(unittest.TestCase):
         print(truemh)
         self.assertTrue(abs(truemh - cudamh) < 0.005)
 
+    def test_slice(self):
+        numpy.random.seed(0)
+        data = numpy.random.randint(0, 100, (6400, 130))
+        mask = numpy.random.randint(0, 5, data.shape)
+        data *= (mask >= 4)
+        del mask
+        gen = libMHCUDA.minhash_cuda_init(data.shape[-1], 128, verbosity=2)
+        m = csr_matrix(data, dtype=numpy.float32)
+        hashes = libMHCUDA.minhash_cuda_calc(gen, m)
+        hashes2 = libMHCUDA.minhash_cuda_calc(
+            gen, m, row_start=3200, row_finish=4800)
+        libMHCUDA.minhash_cuda_fini(gen)
+        self.assertTrue((hashes[3200:4800] == hashes2).all())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,7 +111,7 @@ Creates the hasher.
 **return** integer, pointer to generator struct (opaque).
 
 ```python
-def minhash_cuda_calc(gen, matrix)
+def minhash_cuda_calc(gen, matrix, row_start=0, row_finish=0xffffffff)
 ```
 Calculates Weighted MinHash-es. May reallocate memory on GPU but does it's best to reuse the buffers.
 
@@ -119,6 +119,12 @@ Calculates Weighted MinHash-es. May reallocate memory on GPU but does it's best 
 
 **matrix** `scipy.sparse.csr_matrix` instance, the number of columns must match **dim**.
            The number of rows must be less than 2³¹.
+           
+**row_start** integer, slice start offset (the index of the first row to process).
+              Enables efficient zero-copy sparse matrix slicing.
+              
+**row_finish** integer, slice finish offset (the index of the row after the last
+               one to process). The resulting matrix row slice is [row-start:row_finish].
 
 **return** `numpy.ndarray` of shape (number of matrix rows, **samples**, 2) and dtype uint32.
 

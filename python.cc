@@ -23,7 +23,7 @@ static char minhash_cuda_fini_docstring[] =
 static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args, PyObject *kwargs);
 static PyObject *py_minhash_cuda_retrieve_vars(PyObject *self, PyObject *args);
 static PyObject *py_minhash_cuda_assign_vars(PyObject *self, PyObject *args);
-static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args);
+static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args, PyObject *kwargs);
 static PyObject *py_minhash_cuda_fini(PyObject *self, PyObject *args);
 
 static PyMethodDef module_functions[] = {
@@ -34,7 +34,7 @@ static PyMethodDef module_functions[] = {
   {"minhash_cuda_assign_vars", reinterpret_cast<PyCFunction>(py_minhash_cuda_assign_vars),
    METH_VARARGS, minhash_cuda_assign_vars_docstring},
   {"minhash_cuda_calc", reinterpret_cast<PyCFunction>(py_minhash_cuda_calc),
-   METH_VARARGS, minhash_cuda_calc_docstring},
+   METH_VARARGS | METH_KEYWORDS, minhash_cuda_calc_docstring},
   {"minhash_cuda_fini", reinterpret_cast<PyCFunction>(py_minhash_cuda_fini),
    METH_VARARGS, minhash_cuda_fini_docstring},
   {NULL, NULL, 0, NULL}
@@ -90,7 +90,8 @@ static void set_cuda_memcpy_error() {
   PyErr_SetString(PyExc_RuntimeError, "cudaMemcpy failed");
 }
 
-static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args, PyObject *kwargs) {
+static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args,
+                                      PyObject *kwargs) {
   uint32_t dim, seed = static_cast<uint32_t>(time(NULL)), devices = 0;
   uint16_t samples;
   int verbosity = 0;
@@ -264,10 +265,19 @@ static PyObject *py_minhash_cuda_assign_vars(PyObject *self, PyObject *args) {
   }
 }
 
-static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args) {
+static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args,
+                                      PyObject *kwargs) {
   PyObject *csr_matrix;
   uint64_t gen_ptr;
-  if (!PyArg_ParseTuple(args, "KO", &gen_ptr, &csr_matrix)) {
+  uint32_t row_start = 0, row_finish = 0xFFFFFFFFu;
+
+  static const char *kwlist[] = {
+      "gen", "matrix", "row_start", "row_finish", NULL
+  };
+
+  if (!PyArg_ParseTupleAndKeywords(
+      args, kwargs, "KO|II", const_cast<char**>(kwlist),
+      &gen_ptr, &csr_matrix, &row_start, &row_finish)) {
     return NULL;
   }
   MinhashCudaGenerator *gen =
@@ -314,6 +324,33 @@ static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args) {
   auto cols = reinterpret_cast<uint32_t *>(PyArray_DATA(cols_obj.get()));
   auto rows = reinterpret_cast<uint32_t *>(PyArray_DATA(rows_obj.get()));
   auto length = static_cast<uint32_t>(rows_dims[0]) - 1;
+
+  if (row_start >= length) {
+    PyErr_SetString(PyExc_ValueError,
+                    "minhash_cuda_calc: row_start must be less than the "
+                    "total number of rows in the input matrix.");
+    return NULL;
+  }
+  row_finish = std::min(row_finish, length);
+  if (row_finish <= row_start) {
+    PyErr_SetString(PyExc_ValueError,
+                    "minhash_cuda_calc: row_finish must be greater than "
+                    "row_start.");
+    return NULL;
+  }
+  length = row_finish - row_start;
+  std::unique_ptr<uint32_t[]> sliced_rows;
+  if (row_start > 0) {
+    uint32_t offset = rows[row_start];
+    weights += offset;
+    cols += offset;
+    sliced_rows.reset(new uint32_t[length + 1]);
+    #pragma omp simd
+    for (uint32_t i = row_start; i <= row_finish; i++) {
+      sliced_rows[i - row_start] = rows[i] - offset;
+    }
+  }
+
   auto params = mhcuda_get_parameters(gen);
   npy_intp hash_dims[] = {length, params.samples, 2, 0};
   auto output_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
@@ -321,7 +358,9 @@ static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args) {
   auto output = reinterpret_cast<uint32_t *>(PyArray_DATA(output_obj));
   int result;
   Py_BEGIN_ALLOW_THREADS
-  result = mhcuda_calc(gen, weights, cols, rows, length, output);
+  result = mhcuda_calc(gen, weights, cols,
+                       sliced_rows? sliced_rows.get() : rows,
+                       length, output);
   Py_END_ALLOW_THREADS
   switch (result) {
     case mhcudaInvalidArguments:
