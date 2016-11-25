@@ -10,6 +10,7 @@ brings 600-1000x speedup over numpy with [MKL](https://en.wikipedia.org/wiki/Mat
 It supports running on multiple GPUs to be even faster, e.g., processing 10Mx12M
 matrix with sparsity 0.0014 takes 40 minutes using two Titan Xs.
 The produced results are bit-to-bit identical to the reference implementation.
+Read the [article](http://blog.sourced.tech/post/minhashcuda/).
 
 The input format is 32-bit float [CSR](https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_.28CSR.2C_CRS_or_Yale_format.29) matrix.
 The code is optimized for low memory consumption and speed.
