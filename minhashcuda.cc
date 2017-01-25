@@ -40,24 +40,24 @@ struct MinhashCudaGenerator_ {
 }  // extern "C"
 
 
-static std::vector<int> setup_devices(uint32_t device, int verbosity) {
+static std::vector<int> setup_devices(uint32_t devices, int verbosity) {
   std::vector<int> devs;
-  if (device == 0) {
-    cudaGetDeviceCount(reinterpret_cast<int *>(&device));
-    if (device == 0) {
+  if (devices == 0) {
+    cudaGetDeviceCount(reinterpret_cast<int *>(&devices));
+    if (devices == 0) {
       return std::move(devs);
     }
-    device = (1u << device) - 1;
+    devices = (1u << devices) - 1;
   }
-  for (int dev = 0; device; dev++) {
-    if (device & 1) {
+  for (int dev = 0; devices; dev++) {
+    if (devices & 1) {
       devs.push_back(dev);
       if (cudaSetDevice(dev) != cudaSuccess) {
         INFO("failed to validate device %d", dev);
         devs.pop_back();
       }
     }
-    device >>= 1;
+    devices >>= 1;
   }
   if (devs.size() > 1) {
     for (int dev1 : devs) {
@@ -268,10 +268,11 @@ MHCUDAResult mhcuda_assign_random_vars(
 }  // extern "C"
 
 static std::vector<uint32_t> calc_best_split(
-    const MinhashCudaGenerator *gen, const uint32_t *rows, uint32_t length) {
-  uint32_t ideal_split = rows[length] / gen->devs.size();
+    const uint32_t *rows, uint32_t length, const std::vector<int> &devs,
+    const std::vector<uint32_t> &sizes) {
+  uint32_t ideal_split = rows[length] / devs.size();
   std::vector<std::vector<uint32_t>> variants;
-  for (size_t devi = 0; devi < gen->devs.size(); devi++) {
+  for (size_t devi = 0; devi < devs.size(); devi++) {
     uint32_t row = std::upper_bound(
         rows, rows + length + 1, ideal_split * (devi + 1)) - rows;
     std::vector<std::vector<uint32_t>> fork;
@@ -301,9 +302,9 @@ static std::vector<uint32_t> calc_best_split(
   uint32_t min_cost = 0xFFFFFFFFu;
   for (auto &v : variants) {
     uint32_t cost = 0;
-    for (size_t i = 0; i < gen->devs.size(); i++) {
+    for (size_t i = 0; i < devs.size(); i++) {
       uint32_t row = v[i], prev_row = (i > 0)? v[i - 1] : 0;
-      uint32_t diff = rows[row] - rows[prev_row] - gen->sizes[i];
+      uint32_t diff = rows[row] - rows[prev_row] - sizes[i];
       if (diff > 0) {
         cost += diff * diff;
       }
@@ -522,7 +523,7 @@ MHCUDAResult mhcuda_calc(
         rows, length, output);
   auto &devs = gen->devs;
   INFO("Preparing...\n");
-  std::vector<uint32_t> split = calc_best_split(gen, rows, length);
+  std::vector<uint32_t> split = calc_best_split(rows, length, gen->devs, gen->sizes);
   if (verbosity > 1) {
     dump_vector(split, "split");
   }

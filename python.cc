@@ -68,15 +68,19 @@ template <typename O>
 using pyobj_parent = std::unique_ptr<O, std::function<void(O*)>>;
 
 template <typename O>
-class pyobj : public pyobj_parent<O> {
+class _pyobj : public pyobj_parent<O> {
  public:
-  pyobj() : pyobj_parent<O>(
-      nullptr, [](PyObject *p){ if (p) Py_DECREF(p); }) {}
-  explicit pyobj(PyObject *ptr) : pyobj_parent<O>(
+  _pyobj() : pyobj_parent<O>(
+      nullptr, [](O *p){ if (p) Py_DECREF(p); }) {}
+  explicit _pyobj(PyObject *ptr) : pyobj_parent<O>(
       reinterpret_cast<O *>(ptr), [](O *p){ if(p) Py_DECREF(p); }) {}
+  void reset(PyObject *p) noexcept {
+    pyobj_parent<O>::reset(reinterpret_cast<O*>(p));
+  }
 };
 
-using pyarray = pyobj<PyArrayObject>;
+using pyobj = _pyobj<PyObject>;
+using pyarray = _pyobj<PyArrayObject>;
 
 static void set_cuda_malloc_error() {
   PyErr_SetString(PyExc_MemoryError, "Failed to allocate memory on GPU");
