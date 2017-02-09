@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/src-d/minhashcuda.svg?branch=master)](https://travis-ci.org/src-d/minhashcuda) [![PyPI](https://img.shields.io/pypi/v/libMHCUDA.svg)](https://pypi.python.org/pypi/libMHCUDA)
+[![Build Status](https://travis-ci.org/src-d/minhashcuda.svg?branch=master)](https://travis-ci.org/src-d/minhashcuda) [![PyPI](https://img.shields.io/pypi/v/libMHCUDA.svg)](https://pypi.python.org/pypi/libMHCUDA) [![10.5281/zenodo.286955](https://zenodo.org/badge/DOI/10.5281/zenodo.286955.svg)](https://doi.org/10.5281/zenodo.286955)
 
 MinHashCuda
 ===========
