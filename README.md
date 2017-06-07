@@ -198,3 +198,5 @@ Generator pointer is invalidated.
 License
 -------
 MIT license.
+
+#### README {#ignore_this_doxygen_anchor}
