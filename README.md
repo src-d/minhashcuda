@@ -77,7 +77,7 @@ del data
 # Initialize the hasher aka "generator" with 128 hash samples for every row
 gen = libMHCUDA.minhash_cuda_init(m.shape[-1], 128, seed=1, verbosity=1)
 
-# Calculate thr hashes. Can be executed several times with different number of rows
+# Calculate the hashes. Can be executed several times with different number of rows
 hashes = libMHCUDA.minhash_cuda_calc(gen, m)
 
 # Free the resources
