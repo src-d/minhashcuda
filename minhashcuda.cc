@@ -218,27 +218,24 @@ MinhashCudaGenerator *mhcuda_init(
   }
   auto gen = std::unique_ptr<MinhashCudaGenerator>(
       new MinhashCudaGenerator(dim, samples, devs, verbosity));
-  auto res = mhcuda_init_internal(gen.get(), seed, devs);
-  if (res != mhcudaSuccess) {
-    if (status) *status = res;
-    return nullptr;
-  }
+  #define CHECK_SUCCESS(x) do { \
+    auto res = x; \
+    if (res != mhcudaSuccess) { \
+      if (status) *status = res; \
+      return nullptr; \
+    } \
+  } while(false)
+  CHECK_SUCCESS(mhcuda_init_internal(gen.get(), seed, devs));
   if (verbosity > 1) {
-    res = print_memory_stats(devs);
-    if (res != mhcudaSuccess) {
-      if (status) *status = res;
-      return nullptr;
-    }
+    CHECK_SUCCESS(print_memory_stats(devs));
   }
-  res = setup_weighted_minhash(dim, devs, verbosity);
-  if (res != mhcudaSuccess) {
-    if (status) *status = res;
-    return nullptr;
-  }
+  CHECK_SUCCESS(setup_weighted_minhash(dim, devs, verbosity));
   return gen.release();
+  #undef CHECK_SUCCESS
 }
 
-MinhashCudaGeneratorParameters mhcuda_get_parameters(const MinhashCudaGenerator *gen) {
+MinhashCudaGeneratorParameters mhcuda_get_parameters(
+    const MinhashCudaGenerator *gen) {
   if (gen == nullptr) {
     return {};
   }
@@ -256,9 +253,9 @@ MHCUDAResult mhcuda_retrieve_random_vars(
   auto &devs = gen->devs;
   size_t const_size = gen->dim * gen->samples * sizeof(float);
   CUCH(cudaSetDevice(devs[0]), mhcudaNoSuchDevice);
-  CUCH(cudaMemcpy(rs, gen->rs[0].get(), const_size, cudaMemcpyDeviceToHost),
+  CUCH(cudaMemcpyAsync(rs, gen->rs[0].get(), const_size, cudaMemcpyDeviceToHost),
        mhcudaMemoryCopyError);
-  CUCH(cudaMemcpy(ln_cs, gen->ln_cs[0].get(), const_size, cudaMemcpyDeviceToHost),
+  CUCH(cudaMemcpyAsync(ln_cs, gen->ln_cs[0].get(), const_size, cudaMemcpyDeviceToHost),
        mhcudaMemoryCopyError);
   CUCH(cudaMemcpy(betas, gen->betas[0].get(), const_size, cudaMemcpyDeviceToHost),
        mhcudaMemoryCopyError);
@@ -407,6 +404,7 @@ static void binpack(
     const MinhashCudaGenerator *gen, const uint32_t *rows,
     const std::vector<uint32_t> &split, const std::vector<int> &sample_deltas,
     std::vector<std::vector<int32_t>> *plans, std::vector<uint32_t> *grid_sizes) {
+  // https://blog.sourced.tech/post/minhashcuda/
   const int32_t ideal_binavgcount = 20;
   auto &devs = gen->devs;
   int verbosity = gen->verbosity;
@@ -538,7 +536,7 @@ MHCUDAResult mhcuda_calc(
         rows, length, output);
   auto &devs = gen->devs;
   INFO("Preparing...\n");
-  std::vector<uint32_t> split = calc_best_split(rows, length, gen->devs, gen->sizes);
+  auto split = calc_best_split(rows, length, gen->devs, gen->sizes);
   if (verbosity > 1) {
     dump_vector(split, "split");
   }
