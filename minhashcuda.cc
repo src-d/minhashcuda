@@ -282,6 +282,20 @@ MHCUDAResult mhcuda_assign_random_vars(
 static std::vector<uint32_t> calc_best_split(
     const uint32_t *rows, uint32_t length, const std::vector<int> &devs,
     const std::vector<uint32_t> &sizes) {
+  // We need to distribute `length` rows into `devs.size()` devices.
+  // The number of items is different in every row.
+  // So we record each 2 possibilities <> the optimal boundary.
+  // 2 devices  -> 2 variants
+  // 4 -> 8
+  // 8 -> 128
+  // 10 -> 512
+  // 16 -> 32768
+  // Then the things get tough. The complexity is O(2^(2(n - 1)))
+  // Hopefully, we will not see more GPUs in a single node soon.
+  // We evaluate each variant by the cumulative cost function.
+  // Every call to mhcuda_calc() can grow the buffers a little; the cost function
+  // optimizes for the number of reallocations first and the imbalance second.
+
   uint32_t ideal_split = rows[length] / devs.size();
   std::vector<std::vector<uint32_t>> variants;
   for (size_t devi = 0; devi < devs.size(); devi++) {
@@ -311,15 +325,31 @@ static std::vector<uint32_t> calc_best_split(
   }
   assert(!variants.empty());
   std::vector<uint32_t> *best = nullptr;
-  uint32_t min_cost = 0xFFFFFFFFu;
+  struct Cost : public std::tuple<uint32_t, uint32_t> {
+    Cost() = default;
+
+    Cost(const std::tuple<uint32_t, uint32_t>& other)
+        : std::tuple<uint32_t, uint32_t>(other) {}
+
+    Cost& operator+=(const std::tuple<uint32_t, uint32_t>& other) {
+      std::get<0>(*this) += std::get<0>(other);
+      std::get<1>(*this) += std::get<1>(other);
+      return *this;
+    }
+  };
+  Cost min_cost = std::make_tuple(0xFFFFFFFFu, 0xFFFFFFFFu);
   for (auto &v : variants) {
-    uint32_t cost = 0;
+    Cost cost;
     for (size_t i = 0; i < devs.size(); i++) {
       uint32_t row = v[i], prev_row = (i > 0)? v[i - 1] : 0;
-      uint32_t diff = rows[row] - rows[prev_row] - sizes[i];
-      if (diff > 0) {
-        cost += diff * diff;
-      }
+      uint32_t rdelta = rows[row] - rows[prev_row];
+      uint32_t diff1 = (rdelta > sizes[i])? (rdelta - sizes[i]) : 0;
+      diff1 *= diff1;
+      uint32_t diff2 = (rdelta > ideal_split)? (rdelta - ideal_split)
+                                             : (ideal_split - rdelta);
+      diff2 *= diff2;
+      auto diff = std::make_tuple(diff1, diff2);
+      cost += diff;
     }
     if (cost < min_cost) {
       best = &v;
