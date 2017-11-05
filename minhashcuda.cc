@@ -56,6 +56,21 @@ static std::vector<int> setup_devices(uint32_t devices, int verbosity) {
         INFO("failed to validate device %d", dev);
         devs.pop_back();
       }
+      cudaDeviceProp props;
+      auto err = cudaGetDeviceProperties(&props, dev);
+      if (err != cudaSuccess) {
+        INFO("failed to cudaGetDeviceProperties(%d): %s\n",
+             dev, cudaGetErrorString(err));
+        devs.pop_back();
+      }
+      if (props.major != (CUDA_ARCH / 10) || props.minor != (CUDA_ARCH % 10)) {
+        INFO("compute capability mismatch for device %d: wanted %d.%d, have "
+             "%d.%d\n>>>> you may want to build kmcuda with -DCUDA_ARCH=%d "
+             "(refer to \"Building\" in README.md)\n",
+             dev, CUDA_ARCH / 10, CUDA_ARCH % 10, props.major, props.minor,
+             props.major * 10 + props.minor);
+        devs.pop_back();
+      }
     }
     devices >>= 1;
   }
@@ -203,27 +218,24 @@ MinhashCudaGenerator *mhcuda_init(
   }
   auto gen = std::unique_ptr<MinhashCudaGenerator>(
       new MinhashCudaGenerator(dim, samples, devs, verbosity));
-  auto res = mhcuda_init_internal(gen.get(), seed, devs);
-  if (res != mhcudaSuccess) {
-    if (status) *status = res;
-    return nullptr;
-  }
+  #define CHECK_SUCCESS(x) do { \
+    auto res = x; \
+    if (res != mhcudaSuccess) { \
+      if (status) *status = res; \
+      return nullptr; \
+    } \
+  } while(false)
+  CHECK_SUCCESS(mhcuda_init_internal(gen.get(), seed, devs));
   if (verbosity > 1) {
-    res = print_memory_stats(devs);
-    if (res != mhcudaSuccess) {
-      if (status) *status = res;
-      return nullptr;
-    }
+    CHECK_SUCCESS(print_memory_stats(devs));
   }
-  res = setup_weighted_minhash(dim, devs, verbosity);
-  if (res != mhcudaSuccess) {
-    if (status) *status = res;
-    return nullptr;
-  }
+  CHECK_SUCCESS(setup_weighted_minhash(dim, devs, verbosity));
   return gen.release();
+  #undef CHECK_SUCCESS
 }
 
-MinhashCudaGeneratorParameters mhcuda_get_parameters(const MinhashCudaGenerator *gen) {
+MinhashCudaGeneratorParameters mhcuda_get_parameters(
+    const MinhashCudaGenerator *gen) {
   if (gen == nullptr) {
     return {};
   }
@@ -241,9 +253,9 @@ MHCUDAResult mhcuda_retrieve_random_vars(
   auto &devs = gen->devs;
   size_t const_size = gen->dim * gen->samples * sizeof(float);
   CUCH(cudaSetDevice(devs[0]), mhcudaNoSuchDevice);
-  CUCH(cudaMemcpy(rs, gen->rs[0].get(), const_size, cudaMemcpyDeviceToHost),
+  CUCH(cudaMemcpyAsync(rs, gen->rs[0].get(), const_size, cudaMemcpyDeviceToHost),
        mhcudaMemoryCopyError);
-  CUCH(cudaMemcpy(ln_cs, gen->ln_cs[0].get(), const_size, cudaMemcpyDeviceToHost),
+  CUCH(cudaMemcpyAsync(ln_cs, gen->ln_cs[0].get(), const_size, cudaMemcpyDeviceToHost),
        mhcudaMemoryCopyError);
   CUCH(cudaMemcpy(betas, gen->betas[0].get(), const_size, cudaMemcpyDeviceToHost),
        mhcudaMemoryCopyError);
@@ -270,6 +282,20 @@ MHCUDAResult mhcuda_assign_random_vars(
 static std::vector<uint32_t> calc_best_split(
     const uint32_t *rows, uint32_t length, const std::vector<int> &devs,
     const std::vector<uint32_t> &sizes) {
+  // We need to distribute `length` rows into `devs.size()` devices.
+  // The number of items is different in every row.
+  // So we record each 2 possibilities <> the optimal boundary.
+  // 2 devices  -> 2 variants
+  // 4 -> 8
+  // 8 -> 128
+  // 10 -> 512
+  // 16 -> 32768
+  // Then the things get tough. The complexity is O(2^(2(n - 1)))
+  // Hopefully, we will not see more GPUs in a single node soon.
+  // We evaluate each variant by the cumulative cost function.
+  // Every call to mhcuda_calc() can grow the buffers a little; the cost function
+  // optimizes for the number of reallocations first and the imbalance second.
+
   uint32_t ideal_split = rows[length] / devs.size();
   std::vector<std::vector<uint32_t>> variants;
   for (size_t devi = 0; devi < devs.size(); devi++) {
@@ -299,15 +325,31 @@ static std::vector<uint32_t> calc_best_split(
   }
   assert(!variants.empty());
   std::vector<uint32_t> *best = nullptr;
-  uint32_t min_cost = 0xFFFFFFFFu;
+  struct Cost : public std::tuple<uint32_t, uint32_t> {
+    Cost() = default;
+
+    Cost(const std::tuple<uint32_t, uint32_t>& other)
+        : std::tuple<uint32_t, uint32_t>(other) {}
+
+    Cost& operator+=(const std::tuple<uint32_t, uint32_t>& other) {
+      std::get<0>(*this) += std::get<0>(other);
+      std::get<1>(*this) += std::get<1>(other);
+      return *this;
+    }
+  };
+  Cost min_cost = std::make_tuple(0xFFFFFFFFu, 0xFFFFFFFFu);
   for (auto &v : variants) {
-    uint32_t cost = 0;
+    Cost cost;
     for (size_t i = 0; i < devs.size(); i++) {
       uint32_t row = v[i], prev_row = (i > 0)? v[i - 1] : 0;
-      uint32_t diff = rows[row] - rows[prev_row] - sizes[i];
-      if (diff > 0) {
-        cost += diff * diff;
-      }
+      uint32_t rdelta = rows[row] - rows[prev_row];
+      uint32_t diff1 = (rdelta > sizes[i])? (rdelta - sizes[i]) : 0;
+      diff1 *= diff1;
+      uint32_t diff2 = (rdelta > ideal_split)? (rdelta - ideal_split)
+                                             : (ideal_split - rdelta);
+      diff2 *= diff2;
+      auto diff = std::make_tuple(diff1, diff2);
+      cost += diff;
     }
     if (cost < min_cost) {
       best = &v;
@@ -392,6 +434,7 @@ static void binpack(
     const MinhashCudaGenerator *gen, const uint32_t *rows,
     const std::vector<uint32_t> &split, const std::vector<int> &sample_deltas,
     std::vector<std::vector<int32_t>> *plans, std::vector<uint32_t> *grid_sizes) {
+  // https://blog.sourced.tech/post/minhashcuda/
   const int32_t ideal_binavgcount = 20;
   auto &devs = gen->devs;
   int verbosity = gen->verbosity;
@@ -523,7 +566,7 @@ MHCUDAResult mhcuda_calc(
         rows, length, output);
   auto &devs = gen->devs;
   INFO("Preparing...\n");
-  std::vector<uint32_t> split = calc_best_split(rows, length, gen->devs, gen->sizes);
+  auto split = calc_best_split(rows, length, gen->devs, gen->sizes);
   if (verbosity > 1) {
     dump_vector(split, "split");
   }
