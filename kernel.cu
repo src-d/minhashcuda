@@ -40,7 +40,7 @@ __global__ void log_cuda(uint32_t size, float *v) {
 /// @param rs Gamma(2,1)-random samples. The length must be the product of
 ///           number of processed samples (vectors) by the number of dimensions.
 /// @param ln_cs Logarithm over the gamma(2,1) distribution. Same length as rs.
-/// @param betas Uniformly [0,1] distributed samples. Same length as rs.
+/// @param betas Uniformly [0, 1] distributed samples. Same length as rs.
 /// @param weights CSR's data.
 /// @param cols CSR's indices.
 /// @param rows CSR's indptrs.
@@ -94,7 +94,7 @@ __global__ void weighted_minhash_cuda(
     }
     const float w = logf(weights[index - device_wc_offset]);
     const uint32_t d = cols[index - device_wc_offset];
-    int64_t ci = static_cast<int64_t>(sample_offset) * d_dim + d;
+    volatile int64_t ci = static_cast<int64_t>(sample_offset) * d_dim + d;
     #pragma unroll 4
     for (int s = 0; s < sample_delta; s++, ci += d_dim) {
       // We apply the logarithm trick here: log (a / z) = log a - log z
