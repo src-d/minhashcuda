@@ -359,6 +359,9 @@ static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args,
   npy_intp hash_dims[] = {length, params.samples, 2, 0};
   auto output_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
       3, hash_dims, NPY_UINT32, false));
+  if (!output_obj) {
+    return NULL;
+  }
   auto output = reinterpret_cast<uint32_t *>(PyArray_DATA(output_obj));
   int result;
   Py_BEGIN_ALLOW_THREADS
