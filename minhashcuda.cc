@@ -53,23 +53,26 @@ static std::vector<int> setup_devices(uint32_t devices, int verbosity) {
     if (devices & 1) {
       devs.push_back(dev);
       if (cudaSetDevice(dev) != cudaSuccess) {
-        INFO("failed to validate device %d", dev);
+        INFO("failed to validate device %d\n", dev);
         devs.pop_back();
-      }
-      cudaDeviceProp props;
-      auto err = cudaGetDeviceProperties(&props, dev);
-      if (err != cudaSuccess) {
-        INFO("failed to cudaGetDeviceProperties(%d): %s\n",
-             dev, cudaGetErrorString(err));
-        devs.pop_back();
-      }
-      if (props.major != (CUDA_ARCH / 10) || props.minor != (CUDA_ARCH % 10)) {
-        INFO("compute capability mismatch for device %d: wanted %d.%d, have "
-             "%d.%d\n>>>> you may want to build kmcuda with -DCUDA_ARCH=%d "
-             "(refer to \"Building\" in README.md)\n",
-             dev, CUDA_ARCH / 10, CUDA_ARCH % 10, props.major, props.minor,
-             props.major * 10 + props.minor);
-        devs.pop_back();
+      } else {
+        cudaDeviceProp props;
+        auto err = cudaGetDeviceProperties(&props, dev);
+        if (err != cudaSuccess) {
+          INFO("failed to cudaGetDeviceProperties(%d): %s\n",
+               dev, cudaGetErrorString(err));
+          devs.pop_back();
+        } else {
+          if (props.major != (CUDA_ARCH / 10)
+              || props.minor != (CUDA_ARCH % 10)) {
+            INFO("compute capability mismatch for device %d: wanted %d.%d, have "
+                     "%d.%d\n>>>> you may want to build kmcuda with -DCUDA_ARCH=%d "
+                     "(refer to \"Building\" in README.md)\n",
+                 dev, CUDA_ARCH / 10, CUDA_ARCH % 10, props.major, props.minor,
+                 props.major * 10 + props.minor);
+            devs.pop_back();
+          }
+        }
       }
     }
     devices >>= 1;
