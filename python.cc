@@ -152,7 +152,7 @@ static PyObject *py_minhash_cuda_retrieve_vars(PyObject *self, PyObject *args) {
     return NULL;
   }
   auto params = mhcuda_get_parameters(gen);
-  npy_intp dims[] = {params.dim, params.samples, 0};
+  npy_intp dims[] = {params.samples, params.dim, 0};
   auto rs_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
       2, dims, NPY_FLOAT32, false));
   auto ln_cs_obj = reinterpret_cast<PyArrayObject *>(PyArray_EMPTY(
