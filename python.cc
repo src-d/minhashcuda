@@ -98,21 +98,22 @@ static PyObject *py_minhash_cuda_init(PyObject *self, PyObject *args,
                                       PyObject *kwargs) {
   uint32_t dim, seed = static_cast<uint32_t>(time(NULL)), devices = 0;
   uint16_t samples;
+  int deferred = false;
   int verbosity = 0;
   static const char *kwlist[] = {
-      "dim", "samples", "seed", "devices", "verbosity", NULL
+      "dim", "samples", "seed", "deferred", "devices", "verbosity", NULL
   };
 
   /* Parse the input tuple */
   if (!PyArg_ParseTupleAndKeywords(
-      args, kwargs, "IH|IIi", const_cast<char**>(kwlist), &dim, &samples,
-      &seed, &devices, &verbosity)) {
+      args, kwargs, "IH|IpIi", const_cast<char**>(kwlist), &dim, &samples,
+      &seed, &deferred, &devices, &verbosity)) {
     return NULL;
   }
   MHCUDAResult result = mhcudaSuccess;
   MinhashCudaGenerator *gen;
   Py_BEGIN_ALLOW_THREADS
-  gen = mhcuda_init(dim, samples, seed, devices, verbosity, &result);
+  gen = mhcuda_init(dim, samples, seed, deferred, devices, verbosity, &result);
   Py_END_ALLOW_THREADS
   switch (result) {
     case mhcudaInvalidArguments:

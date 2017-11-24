@@ -46,7 +46,7 @@ class BinaryDistribution(Distribution):
 setup(
     name="libMHCUDA",
     description="Accelerated Weighted MinHash-ing on GPU",
-    version="1.1.5",
+    version="2.0.0",
     license="MIT",
     author="Vadim Markovtsev",
     author_email="vadim@sourced.tech",
@@ -57,7 +57,7 @@ setup(
     distclass=BinaryDistribution,
     cmdclass={'build_py': CMakeBuild},
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",

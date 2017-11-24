@@ -159,12 +159,23 @@ public:
 };
 
 static MHCUDAResult mhcuda_init_internal(
-    MinhashCudaGenerator *gen, uint32_t seed, const std::vector<int>& devs) {
+    MinhashCudaGenerator *gen, uint32_t seed, bool deferred,
+    const std::vector<int>& devs) {
   int verbosity = gen->verbosity;
   size_t const_size = gen->dim * gen->samples;
   CUMALLOC(gen->rs, const_size);
   CUMALLOC(gen->ln_cs, const_size);
   CUMALLOC(gen->betas, const_size);
+  FOR_EACH_DEV(
+    cudaDeviceProp props;
+    CUCH(cudaGetDeviceProperties(&props, dev), mhcudaRuntimeError);
+    gen->shmem_sizes.push_back(props.sharedMemPerBlock);
+    DEBUG("GPU #%" PRIu32 " has %d bytes of shared memory per block\n",
+          dev, gen->shmem_sizes.back());
+  );
+  if (deferred) {
+    return mhcudaSuccess;
+  }
   CUCH(cudaSetDevice(devs.back()), mhcudaNoSuchDevice);
   curandGenerator_t rndgen_;
   CURANDCH(curandCreateGenerator(&rndgen_, CURAND_RNG_PSEUDO_DEFAULT),
@@ -193,23 +204,16 @@ static MHCUDAResult mhcuda_init_internal(
     CUP2P(&gen->ln_cs, 0, const_size);
     CUP2P(&gen->betas, 0, const_size);
   );
-  FOR_EACH_DEV(
-    cudaDeviceProp props;
-    CUCH(cudaGetDeviceProperties(&props, dev), mhcudaRuntimeError);
-    gen->shmem_sizes.push_back(props.sharedMemPerBlock);
-    DEBUG("GPU #%" PRIu32 " has %d bytes of shared memory per block\n",
-          dev, gen->shmem_sizes.back());
-  );
   return mhcudaSuccess;
 }
 
 extern "C" {
 
 MinhashCudaGenerator *mhcuda_init(
-    uint32_t dim, uint16_t samples, uint32_t seed,
+    uint32_t dim, uint16_t samples, uint32_t seed, int deferred,
     uint32_t devices, int verbosity, MHCUDAResult *status) {
-  DEBUG("mhcuda_init: %" PRIu32 " %" PRIu16 " %" PRIu32 " %" PRIu32
-        " %d %p\n", dim, samples, seed, devices, verbosity, status);
+  DEBUG("mhcuda_init: %" PRIu32 " %" PRIu16 " %" PRIu32 " %d %" PRIu32
+        " %d %p\n", dim, samples, seed, deferred, devices, verbosity, status);
   if (dim == 0 || samples == 0) {
     if (status) *status = mhcudaInvalidArguments;
     return nullptr;
@@ -228,7 +232,7 @@ MinhashCudaGenerator *mhcuda_init(
       return nullptr; \
     } \
   } while(false)
-  CHECK_SUCCESS(mhcuda_init_internal(gen.get(), seed, devs));
+  CHECK_SUCCESS(mhcuda_init_internal(gen.get(), seed, deferred, devs));
   if (verbosity > 1) {
     CHECK_SUCCESS(print_memory_stats(devs));
   }
