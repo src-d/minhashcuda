@@ -90,7 +90,7 @@ Python API
 Import "libMHCUDA".
 
 ```python
-def minhash_cuda_init(dim, samples, seed=time(), devices=0, verbosity=0)
+def minhash_cuda_init(dim, samples, seed=time(), deferred=False, devices=0, verbosity=0)
 ```
 Creates the hasher.
 
@@ -102,6 +102,10 @@ Creates the hasher.
             for performance considerations and less than 2¹⁶.
 
 **seed** integer, the random generator seed for reproducible results.
+
+**deferred** boolean, if True, disables the initialization of WMH parameters with
+             random numbers. In that case, the user is expected to call
+             minhash_cuda_assign_random_vars() afterwards.
 
 **devices** integer, bitwise OR-ed CUDA device indices, e.g. 1 means first device, 2 means second device,
             3 means using first and second device. Special value 0 enables all available devices.
@@ -143,7 +147,7 @@ Include "minhashcuda.h".
 
 ```C
 MinhashCudaGenerator* mhcuda_init(
-    uint32_t dim, uint16_t samples, uint32_t seed,
+    uint32_t dim, uint16_t samples, uint32_t seed, int deferred,
     uint32_t devices, int verbosity, MHCUDAResult *status)
 ```
 Initializes the Weighted MinHash generator.
@@ -155,6 +159,10 @@ Initializes the Weighted MinHash generator.
             for performance considerations.
 
 **seed** the random generator seed for reproducible results.
+
+**deferred** if set to anything except 0, disables the initialization of WMH parameters with
+             random numbers. In that case, the user is expected to call
+             mhcuda_assign_random_vars() afterwards.
 
 **devices** bitwise OR-ed CUDA device indices, e.g. 1 means first device, 2 means second device,
             3 means using first and second device. Special value 0 enables all available devices.

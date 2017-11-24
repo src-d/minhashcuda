@@ -63,6 +63,8 @@ enum MHCUDAResult {
 ///                but the larger the hash size and the longer to calculate (linear). Must not be prime
 ///                for performance considerations.
 /// @param seed The random generator seed for reproducible results.
+/// @param deferred Do not initialize the generator. Instead, expect the user to
+///                 call mhcuda_assign_random_vars() afterwards.
 /// @param devices Bitwise OR-ed CUDA device indices, e.g. 1 means first device, 2 means second device,
 ///                3 means using first and second device. Special value 0 enables all available devices.
 /// @param verbosity 0 means complete silence, 1 means mere progress logging, 2 means lots of output.
@@ -70,7 +72,7 @@ enum MHCUDAResult {
 ///               returned result is nullptr and the code is stored into *status (with nullptr check).
 /// @return The pointer to the allocated generator opaque struct.
 MinhashCudaGenerator* mhcuda_init(
-    uint32_t dim, uint16_t samples, uint32_t seed,
+    uint32_t dim, uint16_t samples, uint32_t seed, int deferred,
     uint32_t devices, int verbosity, MHCUDAResult *status) MALLOC;
 
 /// @brief Extracts the parameters for the specified Weighted MinHash generator.
