@@ -46,8 +46,8 @@ class BinaryDistribution(Distribution):
 setup(
     name="libMHCUDA",
     description="Accelerated Weighted MinHash-ing on GPU",
-    version="2.0.0",
-    license="MIT",
+    version="2.0.1",
+    license="Apache Software License",
     author="Vadim Markovtsev",
     author_email="vadim@sourced.tech",
     url="https://github.com/src-d/minhashcuda",
@@ -59,11 +59,12 @@ setup(
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: Apache Software License",
         "Operating System :: POSIX :: Linux",
         "Topic :: Scientific/Engineering :: Information Analysis",
         "Programming Language :: Python :: 3.4",
-        "Programming Language :: Python :: 3.5"
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6"
     ]
 )
 

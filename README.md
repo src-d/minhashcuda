@@ -57,6 +57,16 @@ Testing
 `test.py` contains the unit tests based on [unittest](https://docs.python.org/3/library/unittest.html).
 They require [datasketch](https://github.com/ekzhu/datasketch) and [scipy](https://github.com/scipy/scipy).
 
+Contributions
+-------------
+
+...are welcome! See [CONTRIBUTING](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md).
+
+License
+-------
+
+[Apache 2.0](LICENSE.md)
+
 Python example
 --------------
 ```python
@@ -202,9 +212,5 @@ Generator pointer is invalidated.
 **gen** pointer to the generator opaque struct obtained from mhcuda_init().
 
 **return** the status code.
-
-License
--------
-MIT license.
 
 #### README {#ignore_this_doxygen_anchor}
