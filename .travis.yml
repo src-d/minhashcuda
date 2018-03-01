@@ -8,12 +8,11 @@ _install: &_install
   - . .travis.install
   - pip install numpy auditwheel==1.5 setuptools twine
   - python3 setup.py bdist_wheel
+  - auditwheel repair -w dist dist/*
 
 _deploy: &_deploy
   provider: script
-  script:
-    - auditwheel repair -w dist dist/*
-    - twine upload dist/*manylinux* -u $PYPI_LOGIN -p $PYPI_PASS
+  script: twine upload dist/*manylinux* -u $PYPI_LOGIN -p $PYPI_PASS
   skip_cleanup: true
   on:
     tags: true
@@ -32,14 +31,7 @@ matrix:
       python: 3.4
       install: *_install
       script: skip
-      deploy:
-        provider: script
-        script:
-          - auditwheel repair -w dist dist/*
-          - twine upload dist/*manylinux* -u $PYPI_LOGIN -p $PYPI_PASS
-        skip_cleanup: true
-        on:
-          tags: true
+      deploy: *_deploy
     - language: python
       python: 3.5
       install: *_install
