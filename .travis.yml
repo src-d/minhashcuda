@@ -6,7 +6,7 @@ env:
 
 _install: &_install
   - . .travis.install
-  - pip install numpy auditwheel==1.5 setuptools twine
+  - pip install numpy auditwheel==1.4 setuptools twine
   - python3 setup.py bdist_wheel
   - auditwheel repair -w dist dist/*
 

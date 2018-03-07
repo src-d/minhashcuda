@@ -46,7 +46,7 @@ class BinaryDistribution(Distribution):
 setup(
     name="libMHCUDA",
     description="Accelerated Weighted MinHash-ing on GPU",
-    version="2.0.2",
+    version="2.0.3",
     license="Apache Software License",
     author="Vadim Markovtsev",
     author_email="vadim@sourced.tech",
