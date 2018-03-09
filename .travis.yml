@@ -9,6 +9,8 @@ _install: &_install
   - pip install numpy auditwheel==1.4 setuptools twine
   - python3 setup.py bdist_wheel
   - auditwheel repair -w dist dist/*
+  - unzip dist/*manylinux*
+  - ldd libMHCUDA-*.data/purelib/libMHCUDA.so
 
 _deploy: &_deploy
   provider: script

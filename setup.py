@@ -5,11 +5,29 @@ from setuptools.command.build_py import build_py
 from setuptools.dist import Distribution
 from shutil import copyfile
 from subprocess import check_call
-from sys import platform
+import sys
+import sysconfig
+
+
+def get_python_library():
+    """Get path to the python library associated with the current python
+    interpreter."""
+    cfgvar = sysconfig.get_config_var
+    libname = cfgvar("LDLIBRARY")
+    python_library = os.path.join(
+        cfgvar("LIBDIR") + (cfgvar("multiarchsubdir") or ""),
+        libname)
+    if os.path.exists(python_library):
+        return python_library
+    for root, dirnames, filenames in os.walk(cfgvar("base")):
+        for filename in filenames:
+            if filename == libname:
+                return os.path.join(root, filename)
+    raise FileNotFoundError(libname)
 
 
 class CMakeBuild(build_py):
-    SHLIBEXT = "dylib" if platform == "darwin" else "so"
+    SHLIBEXT = "dylib" if sys.platform == "darwin" else "so"
 
     def run(self):
         if not self.dry_run:
@@ -22,10 +40,15 @@ class CMakeBuild(build_py):
         return outputs
 
     def _build(self, builddir=None):
+        syspaths = sysconfig.get_paths()
         check_call(("cmake", "-DCMAKE_BUILD_TYPE=Release",
                     "-DCUDA_TOOLKIT_ROOT_DIR=%s" % os.getenv(
                         "CUDA_TOOLKIT_ROOT_DIR",
                         "must_export_CUDA_TOOLKIT_ROOT_DIR"),
+                    "-DPYTHON_DEFAULT_EXECUTABLE=python3",
+                    "-DPYTHON_INCLUDE_DIRS=" + syspaths["include"],
+                    "-DPYTHON_EXECUTABLE=" + sys.executable,
+                    "-DPYTHON_LIBRARY=" + get_python_library(),
                     "."))
         check_call(("make", "-j%d" % cpu_count()))
         self.mkpath(self.build_lib)
@@ -55,7 +78,7 @@ setup(
     py_modules=["libMHCUDA"],
     install_requires=["numpy"],
     distclass=BinaryDistribution,
-    cmdclass={'build_py': CMakeBuild},
+    cmdclass={"build_py": CMakeBuild},
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
