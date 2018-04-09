@@ -181,5 +181,34 @@ class MHCUDATests(unittest.TestCase):
             print(hashes)
             raise e from None
 
+    def test_float(self):
+        v1 = [
+            0,          1.0497366,  0.8494359,  0.66231006, 0.66231006, 0.8494359,
+            0,          0.66231006, 0.33652836, 0,           0,         0.5359344,
+            0.8494359,  0.66231006, 1.0497366,  0.33652836, 0.66231006, 0.8494359,
+            0.6800841,  0.33652836]
+        gen = libMHCUDA.minhash_cuda_init(len(v1), 128, devices=1, seed=7, verbosity=2)
+        vars = libMHCUDA.minhash_cuda_retrieve_vars(gen)
+        bgen = WeightedMinHashGenerator.__new__(WeightedMinHashGenerator)
+        bgen.dim = len(v1)
+        bgen.rs, bgen.ln_cs, bgen.betas = vars
+        bgen.sample_size = 128
+        bgen.seed = None
+        m = csr_matrix(numpy.array(v1, dtype=numpy.float32))
+        hashes = libMHCUDA.minhash_cuda_calc(gen, m).astype(numpy.int32)
+        libMHCUDA.minhash_cuda_fini(gen)
+        self.assertEqual(hashes.shape, (1, 128, 2))
+        true_hashes = numpy.array([bgen.minhash(v1).hashvalues], dtype=numpy.int32)
+        self.assertEqual(true_hashes.shape, (1, 128, 2))
+        try:
+            self.assertTrue((hashes == true_hashes).all())
+        except AssertionError as e:
+            print("---- TRUE ----")
+            print(true_hashes)
+            print("---- FALSE ----")
+            print(hashes)
+            raise e from None
+
+
 if __name__ == "__main__":
     unittest.main()

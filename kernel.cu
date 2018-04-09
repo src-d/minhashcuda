@@ -105,7 +105,7 @@ __global__ void weighted_minhash_cuda(
       float ln_a = ln_cs[ci] - ln_y - r;
       if (ln_a < lnmins[s]) {
         lnmins[s] = ln_a;
-        dtmins[s] = {d, static_cast<uint32_t>(t)};
+        dtmins[s] = {d, static_cast<uint32_t>(static_cast<int32_t>(t))};
       }
     }
   }
