@@ -302,33 +302,49 @@ static std::vector<uint32_t> calc_best_split(
   // We evaluate each variant by the cumulative cost function.
   // Every call to mhcuda_calc() can grow the buffers a little; the cost function
   // optimizes for the number of reallocations first and the imbalance second.
-
-  uint32_t ideal_split = rows[length] / devs.size();
+  if (devs.size() == 1) {
+    return {length};
+  }
+  uint32_t devs_size = std::min(length, static_cast<uint32_t>(devs.size()));
+  uint32_t ideal_split = rows[length] / devs_size;
+  uint32_t previous_row = 0;
   std::vector<std::vector<uint32_t>> variants;
-  for (size_t devi = 0; devi < devs.size(); devi++) {
+  for (size_t devi = 0; devi < devs_size - 1; devi++) {
+    // we only iterate until devs_size - 1 because the last index is always length
     uint32_t row = std::upper_bound(
-        rows, rows + length + 1, ideal_split * (devi + 1)) - rows;
-    std::vector<std::vector<uint32_t>> fork;
-    if (row <= length) {
+      rows, rows + length + 1, ideal_split * (devi + 1)) - rows;
+    row = std::min(row, static_cast<uint32_t>(length - (devs_size - 1) + devi));
+    if (previous_row == row) {
+      row ++;
+    }
+    if (devi > 0) {
+      std::vector<std::vector<uint32_t>> fork;
       fork.assign(variants.begin(), variants.end());
-    }
-    if (!variants.empty()) {
       for (auto &v : variants) {
-        v.push_back(row - 1);
-      }
-    } else {
-      variants.push_back({row - 1});
-    }
-    if (row <= length) {
-      if (!fork.empty()) {
-        for (auto &v : fork) {
+        if (v.back() < row - 1) {
+          v.push_back(row - 1);
+        } else {
           v.push_back(row);
         }
-      } else {
-        fork.push_back({row});
       }
-      variants.insert(variants.end(), fork.begin(), fork.end());
+      for (auto &v : fork) {
+        if (v.back() < row - 1) {
+          v.push_back(row);
+          variants.push_back(v);
+        }
+      }
+    } else {
+      if (1 < row) {
+        variants.push_back({row - 1});
+        variants.push_back({row});
+      } else {
+        variants.push_back({row});
+      }
     }
+    previous_row = row;
+  }
+  for (auto &v : variants) {
+    v.push_back(length);
   }
   assert(!variants.empty());
   std::vector<uint32_t> *best = nullptr;
@@ -347,7 +363,7 @@ static std::vector<uint32_t> calc_best_split(
   Cost min_cost = std::make_tuple(0xFFFFFFFFu, 0xFFFFFFFFu);
   for (auto &v : variants) {
     Cost cost;
-    for (size_t i = 0; i < devs.size(); i++) {
+    for (size_t i = 0; i < devs_size; i++) {
       uint32_t row = v[i], prev_row = (i > 0)? v[i - 1] : 0;
       uint32_t rdelta = rows[row] - rows[prev_row];
       uint32_t diff1 = (rdelta > sizes[i])? (rdelta - sizes[i]) : 0;
@@ -372,7 +388,8 @@ static MHCUDAResult fill_buffers(
     std::vector<uint32_t> *rsizes, std::vector<uint32_t> *tsizes) {
   int verbosity = gen->verbosity;
   auto &devs = gen->devs;
-  for (size_t devi = 0; devi < devs.size(); devi++) {
+  uint32_t devs_size = std::min(static_cast<size_t>(devs.size()), split.size());
+  for (size_t devi = 0; devi < devs_size; devi++) {
     CUCH(cudaSetDevice(devs[devi]), mhcudaNoSuchDevice);
     uint32_t row = split[devi], prev_row = (devi > 0) ? split[devi - 1] : 0;
     rsizes->push_back(row - prev_row);
@@ -445,10 +462,11 @@ static void binpack(
   const int32_t ideal_binavgcount = 20;
   auto &devs = gen->devs;
   int verbosity = gen->verbosity;
-  plans->resize(devs.size());
-  grid_sizes->resize(devs.size());
+  uint32_t devs_size = std::min(static_cast<size_t>(devs.size()), split.size());
+  plans->resize(devs_size);
+  grid_sizes->resize(devs_size);
   #pragma omp parallel for
-  for (size_t devi = 0; devi < devs.size(); devi++) {
+  for (size_t devi = 0; devi < devs_size; devi++) {
     uint32_t last_row = split[devi], first_row = (devi > 0) ? split[devi - 1] : 0;
     std::vector<std::tuple<int32_t, uint32_t>> blocks;
     blocks.reserve(last_row - first_row);
@@ -513,6 +531,7 @@ static MHCUDAResult fill_plans(
     const MinhashCudaGenerator *gen, const std::vector<std::vector<int32_t>> &plans) {
   int verbosity = gen->verbosity;
   auto &devs = gen->devs;
+
   assert(plans.size() == devs.size());
   for (size_t devi = 0; devi < devs.size(); devi++) {
     CUCH(cudaSetDevice(devs[devi]), mhcudaNoSuchDevice);
