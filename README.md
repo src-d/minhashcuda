@@ -33,14 +33,14 @@ Building
 ```
 cmake -DCMAKE_BUILD_TYPE=Release . && make
 ```
-It requires cudart, curand 7.5 and OpenMP 4.0 capable compiler.
+It requires cudart, curand >=8.0 and OpenMP 4.0 compatible compiler (**that is, not gcc <=4.8**).
 If [numpy](http://www.numpy.org/) headers are not found,
 specify the includes path with defining `NUMPY_INCLUDES`.
 If you do not want to build the Python native module, add `-D DISABLE_PYTHON=y`.
 If CUDA is not automatically found, add `-D CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-8.0`
 (change the path to the actual one).
 
-Python users: if you are using Linux x86-64 and CUDA 7.5, then you can
+Python users: if you are using Linux x86-64 and CUDA 8.0, then you can
 install this easily:
 ```
 pip install libMHCUDA
@@ -49,6 +49,7 @@ Otherwise, you'll have to install it from source:
 ```
 pip install git+https://github.com/src-d/minhashcuda.git
 ```
+**Building in Python virtual environments, e.g. pyenv or conda is officially not supported.** You can still submit patches to fix the related problems.
 
 Testing
 -------
