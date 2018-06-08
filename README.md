@@ -33,12 +33,20 @@ Building
 ```
 cmake -DCMAKE_BUILD_TYPE=Release . && make
 ```
-It requires cudart, curand >=8.0 and OpenMP 4.0 compatible compiler (**that is, not gcc <=4.8**).
+
+It requires cudart, curand >=8.0, OpenMP 4.0 compatible compiler (**that is, not gcc <=4.8**) and 
+cmake >= 3.2.
 If [numpy](http://www.numpy.org/) headers are not found,
 specify the includes path with defining `NUMPY_INCLUDES`.
 If you do not want to build the Python native module, add `-D DISABLE_PYTHON=y`.
 If CUDA is not automatically found, add `-D CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-8.0`
-(change the path to the actual one).
+(change the path to the actual one). 
+If you are building in a Docker container you may encounter the following error: 
+`Could NOT find CUDA (missing: CUDA_TOOLKIT_ROOT_DIR CUDA_INCLUDE_DIRS CUDA_CUDART_LIBRARY)`
+This means you need to install the rest of the CUDA toolkit, which can be installed like in the
+`nvidia/cuda:8.0-devrel` [Dockerfile](https://gitlab.com/nvidia/cuda/blob/ubuntu16.04/8.0/devel/Dockerfile). 
+If you still run into `Could NOT find CUDA (missing: CUDA_INCLUDE_DIRS)` then run:
+ ```ln -s /usr/local/cuda/targets/x86_64-linux/include/* /usr/local/cuda/include/```
 
 Python users: if you are using Linux x86-64 and CUDA 8.0, then you can
 install this easily:
