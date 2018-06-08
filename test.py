@@ -209,6 +209,28 @@ class MHCUDATests(unittest.TestCase):
             print(hashes)
             raise e from None
 
+    def test_split(self):
+        def run_test(v):
+            k = sum([len(part) for part in v])
+            bgen = WeightedMinHashGenerator(len(k))
+            gen = libMHCUDA.minhash_cuda_init(len(k), 128, devices=4, verbosity=2)
+            libMHCUDA.minhash_cuda_assign_vars(gen, bgen.rs, bgen.ln_cs, bgen.betas)
+            m = csr_matrix(numpy.array(v, dtype=numpy.float32))
+            hashes = None
+            try:
+                hashes = libMHCUDA.minhash_cuda_calc(gen, m)
+            finally:
+                self.assertIsNotNone(hashes)
+                self.assertEqual(hashes.shape, (1, 128, 2))
+                libMHCUDA.minhash_cuda_fini(gen)
+        # here we try to break minhashcuda with unbalanced partitions
+        run_test([[2], [1], [1], [1]])
+        run_test([[1] * 50, [1], [1], [1]])
+        run_test([[1], [1] * 50, [1], [1]])
+        run_test([[1], [1], [1] * 50, [1]])
+        run_test([[1], [1], [1], [1] * 50])
+        run_test([[1] * 3, [1] * 10, [1] * 5, [1] * 2])
+
 
 if __name__ == "__main__":
     unittest.main()
