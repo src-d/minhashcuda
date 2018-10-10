@@ -8,6 +8,8 @@ from subprocess import check_call
 import sys
 import sysconfig
 
+with open("README.md") as f:
+    long_description = f.read()
 
 def get_python_library():
     """Get path to the python library associated with the current python
@@ -69,7 +71,9 @@ class BinaryDistribution(Distribution):
 setup(
     name="libMHCUDA",
     description="Accelerated Weighted MinHash-ing on GPU",
-    version="2.1.0",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    version="2.1.1",
     license="Apache Software License",
     author="Vadim Markovtsev",
     author_email="vadim@sourced.tech",
