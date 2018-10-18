@@ -8,7 +8,7 @@ from subprocess import check_call
 import sys
 import sysconfig
 
-with open("README.md") as f:
+with open(os.path.join(os.path.dirname(__file__), "README.md")) as f:
     long_description = f.read()
 
 def get_python_library():
