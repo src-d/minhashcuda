@@ -3,6 +3,7 @@
 
 #include "minhashcuda.h"
 #include <cmath>
+#include <cstdio>
 #include <tuple>
 #include "wrappers.h"
 

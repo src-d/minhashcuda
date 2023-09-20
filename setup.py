@@ -8,6 +8,9 @@ from subprocess import check_call
 import sys
 import sysconfig
 
+import numpy
+
+
 with open(os.path.join(os.path.dirname(__file__), "README.md")) as f:
     long_description = f.read()
 
@@ -44,9 +47,11 @@ class CMakeBuild(build_py):
     def _build(self, builddir=None):
         syspaths = sysconfig.get_paths()
         check_call(("cmake", "-DCMAKE_BUILD_TYPE=Release",
-                    "-DCUDA_TOOLKIT_ROOT_DIR=%s" % os.getenv(
+                    "-DCUDA_ARCH=" + os.getenv("CUDA_ARCH", "80"),
+                    "-DNUMPY=" + numpy.get_include(),
+                    "-DCUDA_TOOLKIT_ROOT_DIR=" + os.getenv(
                         "CUDA_TOOLKIT_ROOT_DIR",
-                        "must_export_CUDA_TOOLKIT_ROOT_DIR"),
+                        "/usr/local/cuda"),
                     "-DPYTHON_DEFAULT_EXECUTABLE=python3",
                     "-DPYTHON_INCLUDE_DIRS=" + syspaths["include"],
                     "-DPYTHON_EXECUTABLE=" + sys.executable,
@@ -73,7 +78,7 @@ setup(
     description="Accelerated Weighted MinHash-ing on GPU",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    version="2.1.1",
+    version="2.2.0",
     license="Apache Software License",
     author="Vadim Markovtsev",
     author_email="vadim@sourced.tech",
@@ -89,9 +94,7 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: POSIX :: Linux",
         "Topic :: Scientific/Engineering :: Information Analysis",
-        "Programming Language :: Python :: 3.4",
-        "Programming Language :: Python :: 3.5",
-        "Programming Language :: Python :: 3.6"
+        "Programming Language :: Python :: 3.10"
     ]
 )
 

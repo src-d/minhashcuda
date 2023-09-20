@@ -45,7 +45,7 @@ static std::vector<int> setup_devices(uint32_t devices, int verbosity) {
   if (devices == 0) {
     cudaGetDeviceCount(reinterpret_cast<int *>(&devices));
     if (devices == 0) {
-      return std::move(devs);
+      return devs;
     }
     devices = (1u << devices) - 1;
   }
@@ -106,7 +106,7 @@ static std::vector<int> setup_devices(uint32_t devices, int verbosity) {
       }
     }
   }
-  return std::move(devs);
+  return devs;
 }
 
 static MHCUDAResult print_memory_stats(const std::vector<int> &devs) {

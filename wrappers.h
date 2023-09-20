@@ -2,6 +2,7 @@
 #define MHCUDA_WRAPPERS_H
 
 #include <cuda_runtime_api.h>
+#include <functional>
 #include <memory>
 #include <vector>
 

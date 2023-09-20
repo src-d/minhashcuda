@@ -70,8 +70,8 @@ __global__ void weighted_minhash_cuda(
   const uint32_t sample_offset = sample_index * sample_delta;
   const uint32_t samples = blockDim.x * sample_delta;
   extern __shared__ float shmem[];
-  float *volatile lnmins = &shmem[(threadIdx.y * blockDim.x + sample_index) * 3 * sample_delta];
-  uint2 *volatile dtmins = reinterpret_cast<uint2 *>(lnmins + sample_delta);
+  float *lnmins = &shmem[(threadIdx.y * blockDim.x + sample_index) * 3 * sample_delta];
+  uint2 *dtmins = reinterpret_cast<uint2 *>(lnmins + sample_delta);
   int32_t row = -1;
   for (uint32_t index = 0, border = 0;; index++) {
     if (index >= border) {
@@ -94,7 +94,7 @@ __global__ void weighted_minhash_cuda(
     }
     const float w = logf(weights[index - device_wc_offset]);
     const uint32_t d = cols[index - device_wc_offset];
-    volatile int64_t ci = static_cast<int64_t>(sample_offset) * d_dim + d;
+    int64_t ci = static_cast<int64_t>(sample_offset) * d_dim + d;
     #pragma unroll 4
     for (int s = 0; s < sample_delta; s++, ci += d_dim) {
       // We apply the logarithm trick here: log (a / z) = log a - log z
