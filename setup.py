@@ -78,7 +78,7 @@ setup(
     description="Accelerated Weighted MinHash-ing on GPU",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    version="2.2.0",
+    version="2.2.1",
     license="Apache Software License",
     author="Vadim Markovtsev",
     author_email="vadim@sourced.tech",
