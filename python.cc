@@ -297,34 +297,35 @@ static PyObject *py_minhash_cuda_calc(PyObject *self, PyObject *args,
     PyErr_SetString(PyExc_ImportError, "Failed to import scipy.sparse.csr_matrix");
     return NULL;
   }
-  PyObject *matrix_type = PyObject_GetAttrString(scipy, "csr_matrix");
+  pyobj matrix_type(PyObject_GetAttrString(scipy, "csr_matrix"));
   if (matrix_type == nullptr) {
     PyErr_SetString(PyExc_ImportError, "Failed to import scipy.sparse.csr_matrix");
     return NULL;
   }
-  if (!PyObject_TypeCheck(csr_matrix, reinterpret_cast<PyTypeObject *>(matrix_type))) {
+  if (!PyObject_TypeCheck(csr_matrix, reinterpret_cast<PyTypeObject *>(matrix_type.get()))) {
     PyErr_SetString(PyExc_TypeError,
                     "The second argument must be of type scipy.sparse.csr_matrix");
     return NULL;
   }
-  pyarray weights_obj(PyArray_FROM_OTF(PyObject_GetAttrString(
-      csr_matrix, "data"), NPY_FLOAT32, NPY_ARRAY_IN_ARRAY));
+  pyobj csr_data(PyObject_GetAttrString(csr_matrix, "data"));
+  pyarray weights_obj(PyArray_FROM_OTF(csr_data.get(), NPY_FLOAT32, NPY_ARRAY_IN_ARRAY));
   if (!weights_obj) {
     PyErr_SetString(PyExc_ValueError, "Failed to convert csr_matrix.data to numpy.array");
     return NULL;
   }
-  pyarray cols_obj(PyArray_FROM_OTF(PyObject_GetAttrString(
-      csr_matrix, "indices"), NPY_UINT32, NPY_ARRAY_FORCECAST | NPY_ARRAY_IN_ARRAY));
+  pyobj csr_indices(PyObject_GetAttrString(csr_matrix, "indices"));
+  pyarray cols_obj(PyArray_FROM_OTF(csr_indices.get(), NPY_UINT32, NPY_ARRAY_FORCECAST | NPY_ARRAY_IN_ARRAY));
   if (!cols_obj) {
     PyErr_SetString(PyExc_ValueError, "Failed to convert csr_matrix.indices to numpy.array");
     return NULL;
   }
-  pyarray rows_obj(PyArray_FROM_OTF(PyObject_GetAttrString(
-      csr_matrix, "indptr"), NPY_UINT32, NPY_ARRAY_FORCECAST | NPY_ARRAY_IN_ARRAY));
+  pyobj csr_indptr(PyObject_GetAttrString(csr_matrix, "indptr"));
+  pyarray rows_obj(PyArray_FROM_OTF(csr_indptr.get(), NPY_UINT32, NPY_ARRAY_FORCECAST | NPY_ARRAY_IN_ARRAY));
   if (!rows_obj) {
     PyErr_SetString(PyExc_ValueError, "Failed to convert csr_matrix.indptr to numpy.array");
     return NULL;
   }
+  
   auto rows_dims = PyArray_DIMS(rows_obj.get());
   auto weights = reinterpret_cast<float *>(PyArray_DATA(weights_obj.get()));
   auto cols = reinterpret_cast<uint32_t *>(PyArray_DATA(cols_obj.get()));
